@@ -234,41 +234,22 @@ const interPolatePrice = (
   beforePrice: string,
   afterPrice: string
 ): number => {
-  console.log("Interpolation called with:");
-  console.log(" currentTime:", currentTime);
-  console.log(" beforeTime:", beforeTime);
-  console.log(" afterTime:", afterTime);
-  console.log(" beforePrice:", beforePrice);
-  console.log(" afterPrice:", afterPrice);
-
-  const current = new Date(Number(currentTime) * 1000).getTime();
-  const before = new Date(Number(beforeTime) * 1000).getTime();
-  const after = new Date(Number(afterTime) * 1000).getTime();
-
-  console.log("Converted to timestamps (ms):");
-  console.log(" current:", current);
-  console.log(" before:", before);
-  console.log(" after:", after);
+  const current = Number(currentTime) * 1000;
+  const before = Number(beforeTime) * 1000;
+  const after = Number(afterTime) * 1000;
 
   const beforeP = parseFloat(beforePrice);
   const afterP = parseFloat(afterPrice);
 
-  console.log("Parsed prices:");
-  console.log(" beforeP:", beforeP);
-  console.log(" afterP:", afterP);
-
   if (after === before) {
-    console.warn(
-      "Warning: beforeTime and afterTime are equal, returning beforePrice to avoid division by zero."
-    );
-    return beforeP; // avoid division by zero
+    console.warn("beforeTime and afterTime are equal, returning beforePrice.");
+    return Number(beforeP.toFixed(10));
   }
 
-  const timeFraction = (current - before) / (after - before);
-  console.log("Calculated timeFraction:", timeFraction);
+  const timeFraction = Math.min(Math.max((current - before) / (after - before), 0), 1);
 
   const interpolatedValue = beforeP + timeFraction * (afterP - beforeP);
-  console.log("Interpolated price:", interpolatedValue);
 
-  return interpolatedValue;
+  return Number(interpolatedValue.toFixed(10));
 };
+

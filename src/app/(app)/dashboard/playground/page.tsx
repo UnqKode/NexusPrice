@@ -57,9 +57,24 @@ const Page = () => {
 
       if (data.success) {
         console.log("Price data fetched successfully:", data);
+
+        const currentPriceNum = data.Current?.price;
+        const historyPriceNum = data.History?.price;
+
+        
+
+        const historyPriceStr =
+          typeof historyPriceNum === "number"
+            ? historyPriceNum.toFixed(12)
+            : "0.00";
+
+        console.log("Historical price:", historyPriceStr);
+
         setCurrentPrice(data.Current?.price ?? "0.00");
-        setTimeStampPrice(data.History?.price ?? "0.00");
+        setTimeStampPrice(historyPriceStr);
+
         toast.success("Price data fetched successfully", { id: id });
+
         setTimeout(() => {
           if (data.History?.method) {
             toast.info("Fetch through: " + data.History?.method);
