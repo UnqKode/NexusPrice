@@ -1,8 +1,7 @@
-// workers/priceWorker.ts
 
 
 
-//since worker is not a Next.js page, we need to import dotenv manually and i will be running this file on another server as its need to keep listing from the queue
+//since worker is not a Next.js page, we need to ximport dotenv manually and i will be running this file on another server as its need to keep listing from the queue
 
 import { Worker, Job } from "bullmq";
 import dbConnect from "../lib/dbConnect";
@@ -25,7 +24,6 @@ const connection = {
   keepAlive: true,
 };
 
-// Network mapping for Alchemy
 const NETWORK_MAP: Record<string, string> = {
   ethereum: "eth-mainnet",
   polygon: "polygon-mainnet",
@@ -33,7 +31,6 @@ const NETWORK_MAP: Record<string, string> = {
   optimism: "opt-mainnet",
 };
 
-// --- Helper Function: Find Token Creation Date ---
 const findTokenBirthday = async (
   coinId: string,
   network: string
@@ -75,7 +72,6 @@ const findTokenBirthday = async (
       throw new Error(`No creation date found for token ${coinId}`);
     }
 
-    // Ensure timestamp is a valid date string
     const date = new Date(timestamp);
     if (isNaN(date.getTime())) {
       throw new Error(
@@ -90,10 +86,8 @@ const findTokenBirthday = async (
   }
 };
 
-// --- Helper Function: Fetch Price for a Specific Day ---
 
 
-// --- Helper Function: Fetch Price for a Specific Day ---
 const fetchPriceForDay = async (
   coinId: string,
   network: string,
@@ -157,7 +151,6 @@ const fetchPriceForDay = async (
 };
 
 
-// --- Main Worker Logic ---
 const processor = async (
   job: Job
 ): Promise<{ coinId: string; network: string; status: string }> => {
@@ -172,7 +165,6 @@ const processor = async (
     const birthday = await findTokenBirthday(coinId, network);
     console.log(`🎂 Token ${coinId} was created on: ${birthday.toISOString()}`);
 
-    // Set start and end dates to midnight UTC
     const startDate = new Date(birthday.setUTCHours(0, 0, 0, 0));
     const today = new Date(new Date().setUTCHours(0, 0, 0, 0));
     console.log(`📅 Fetching prices from ${startDate.toISOString()} to ${today.toISOString()}`);
@@ -185,7 +177,6 @@ const processor = async (
       const dateStr = currentDate.toISOString().split("T")[0];
       console.log(`🔍 Checking price data for ${dateStr}...`);
 
-      // Check for existing price record
       const existingPrice = await Price.findOne({
         tokenAddress: coinId,
         network,
@@ -211,7 +202,6 @@ const processor = async (
           console.log(`⚠️ No price data found for ${dateStr}`);
         }
 
-        // Wait a bit between requests to avoid rate limits
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
 
@@ -229,12 +219,11 @@ const processor = async (
   }
 };
 
-// Initialize worker
 const worker = new Worker(QUEUE_NAME, processor, {
   connection,
   limiter: {
-    max: 1, // Process 1 job at a time
-    duration: 1000, // per second
+    max: 1, 
+    duration: 1000,
   },
 });
 

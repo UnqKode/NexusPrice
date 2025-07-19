@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // --- FIX: This is where you add the job to the queue ---
+   
     await priceHistoryQueue.add("fetch-history", { coinId, network });
     console.log(`✅ Job added to queue for ${coinId} on ${network}.`);
 

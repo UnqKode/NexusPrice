@@ -10,7 +10,7 @@ const Nav = () => {
 
   return (
     <>
-      {/* Desktop Navigation */}
+     
       <motion.nav
        initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -61,7 +61,7 @@ const Nav = () => {
         </div>
       </motion.nav>
 
-      {/* Mobile Navigation */}
+    
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -96,7 +96,7 @@ const Nav = () => {
           </div>
         </div>
 
-        {/* Mobile Menu Dropdown */}
+    
         {isMenuOpen && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}

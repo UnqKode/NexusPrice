@@ -141,7 +141,7 @@ const fetchHistoricalData = async () => {
         </button>
       </div>
 
-      {/* Input Form */}
+    
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
         <div className="space-y-1">
           <label className="block text-sm font-medium text-gray-300">
@@ -204,7 +204,7 @@ const fetchHistoricalData = async () => {
         </div>
       </div>
 
-      {/* Chart Area */}
+  
       <div className="mt-6 h-[400px] relative">
         {chartData.length > 0 ? (
           <>
@@ -282,7 +282,7 @@ const fetchHistoricalData = async () => {
         )}
       </div>
 
-      {/* Additional Info */}
+    
       {chartData.length > 0 && (
         <div className="mt-6 flex flex-wrap gap-4 justify-between items-center text-sm text-gray-400">
           <div>

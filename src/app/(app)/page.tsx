@@ -35,7 +35,7 @@ const Page = () => {
     <>
       <Nav />
       <div className="w-full relative overflow-hidden bg-black">
-        {/* Hero Section */}
+   
         <div className="h-screen relative">
           <motion.img
             src="/assets/images/home.jpg"
@@ -100,7 +100,7 @@ const Page = () => {
           </div>
         </div>
 
-        {/* Features Section */}
+       
         <div className="py-20 px-6 md:px-20 bg-gradient-to-b from-gray-900 to-black">
           <motion.div 
             initial={{ opacity: 0 }}
@@ -133,7 +133,6 @@ const Page = () => {
             </div>
           </motion.div>
 
-          {/* Graph Visualization Section */}
           <div className="mt-20 max-w-6xl mx-auto">
             <motion.div
               initial={{ opacity: 0 }}
@@ -192,7 +191,6 @@ const Page = () => {
           </div>
         </div>
 
-        {/* CTA Section */}
         <div className="py-20 px-6 bg-gradient-to-b from-black to-gray-900">
           <motion.div
             initial={{ opacity: 0 }}

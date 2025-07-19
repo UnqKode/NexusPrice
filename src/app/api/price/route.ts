@@ -107,13 +107,13 @@ export async function POST(request: NextRequest) {
         console.log("🔄 Interpolated price:", finalHistoryPrice);
       } catch (err) {
         console.error("❌ Error during interpolation fallback:", err);
-        // fallback to current price or null
+      
         finalHistoryPrice = currentPriceData || null;
         method = currentPriceData ? "current fallback" : "none";
       }
     }
 
-    // Cache the data if prices are available
+   
     if (currentPriceData || finalHistoryPrice) {
       const cacheData = {
         currentPrice: currentPriceData,
@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
       };
       try {
         await client.set(cacheKey, JSON.stringify(cacheData), {
-          EX: 60 * 60 * 24, // 24h expiry
+          EX: 60 * 60 * 24, 
         });
       } catch (err) {
         console.error("❌ Error caching price data:", err);

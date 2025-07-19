@@ -59,7 +59,7 @@ const Page = () => {
         console.log("Price data fetched successfully:", data);
         setCurrentPrice(data.Current?.price ?? "0.00");
         setTimeStampPrice(data.History?.price ?? "0.00");
-        toast.success("Price data fetched successfully",{ id : id});
+        toast.success("Price data fetched successfully", { id: id });
         setTimeout(() => {
           if (data.History?.method) {
             toast.info("Fetch through: " + data.History?.method);
@@ -68,7 +68,7 @@ const Page = () => {
           }
         }, 2000);
       } else {
-        toast.error(data.message || "Failed to fetch price data",{ id : id});
+        toast.error(data.message || "Failed to fetch price data", { id: id });
       }
     } catch (error: unknown) {
       if (error instanceof Error) {
@@ -80,9 +80,8 @@ const Page = () => {
   };
 
   const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault(); // Prevent default form submission
-    onFetchPriceData(); // Call the data fetching function
-
+    e.preventDefault();
+    onFetchPriceData();
     const newEntry = {
       coinId: tokenAddress,
       network: network,
@@ -99,7 +98,7 @@ const Page = () => {
     oldPrice: number,
     newPrice: number
   ): number {
-    if (oldPrice === 0) return 0; // avoid division by zero
+    if (oldPrice === 0) return 0;
     return ((newPrice - oldPrice) / oldPrice) * 100;
   }
 
@@ -145,29 +144,28 @@ const Page = () => {
     <div className="flex-1 h-screen">
       <div className="bg-white/5 backdrop-blur-lg rounded-xl border border-gray-800 p-6 ">
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-3xl font-bold text-white">Price Overview</h2>
-          <div className="flex gap-2">
-            {/* Schedule Full History Button */}
+          <h2 className="text-2xl sm:text-3xl font-bold text-white mb-4">
+            Price Overview
+          </h2>
+
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
             <button
               type="button"
-              onClick={ScheduleFullHistory} // Use onClick for web
-              className="mt-6 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-md text-white transition-colors text-sm font-medium"
+              onClick={ScheduleFullHistory}
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-md text-white transition-colors text-sm font-medium w-full sm:w-auto"
             >
               Schedule Full History
             </button>
           </div>
         </div>
 
-        {/* Stats Cards */}
         <div className="py-5">
           <h3 className="text-lg font-semibold text-white mb-4">
             Add Token Data
           </h3>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Horizontal Fields */}
             <div className="flex flex-col md:flex-row md:items-end md:gap-4 space-y-4 md:space-y-0">
-              {/* Token Address */}
               <div className="flex-1">
                 <label className="block text-sm font-medium text-gray-300 mb-1">
                   Token Address
@@ -180,7 +178,6 @@ const Page = () => {
                 />
               </div>
 
-              {/* Network */}
               <div className="flex-1">
                 <label className="block text-sm font-medium text-gray-300 mb-1">
                   Network
@@ -198,7 +195,6 @@ const Page = () => {
                 </select>
               </div>
 
-              {/* Start Time */}
               <div className="flex-1">
                 <label className="block text-sm font-medium text-gray-300 mb-1">
                   Start Time
@@ -210,7 +206,6 @@ const Page = () => {
                 />
               </div>
 
-              {/* Submit */}
               <div>
                 <button
                   type="submit"
@@ -224,7 +219,6 @@ const Page = () => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 my-6">
-          {/* Timestamp Price Card */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -245,7 +239,6 @@ const Page = () => {
             </p>
           </motion.div>
 
-          {/* Current Price Card */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -271,7 +264,6 @@ const Page = () => {
             </p>
           </motion.div>
 
-          {/* Change Card */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -329,9 +321,6 @@ const Page = () => {
           </motion.div>
         </div>
 
-        {/* Chart Placeholder */}
-
-        {/* Recent Activity */}
         <div className="mb-8">
           <h3 className="text-lg font-semibold text-white mb-4">
             Recent Activity
@@ -350,8 +339,8 @@ const Page = () => {
                   console.log("Clicked:", item);
                 }}
               >
-                <div className="flex justify-between">
-                  <p className="text-white">
+                <div className="flex justify-between gap-5">
+                  <p className="text-white overflow-hidden">
                     Token: <span className="text-blue-400">{item.coinId}</span>
                   </p>
                   <p className="text-gray-400 text-sm">

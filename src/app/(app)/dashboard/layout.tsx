@@ -3,6 +3,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import React, { ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
+import Nav2 from '@/components/Nav2';
 
 const DashboardLayout = ({ children }: { children: ReactNode }) => {
   const pathname = usePathname();
@@ -38,7 +39,7 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
       transition={{ duration: 0.5 }}
       className="bg-gradient-to-br from-gray-900 via-black to-gray-900 h-screen flex"
     >
-      {/* Sidebar */}
+     
       <motion.div
         initial={{ opacity: 1 }}
       animate={{ opacity: 1 }}
@@ -108,7 +109,7 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
         </nav>
       </motion.div>
 
-      {/* Main Content */}
+    
       <div className="flex-1 p-6 overflow-y-auto">
         <AnimatePresence mode="wait">
            <motion.div
@@ -121,6 +122,7 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
               ease: [0.22, 1, 0.36, 1] // Smooth easing curve
             }}
           >
+            <Nav2 />
             {children}
           </motion.div>
         </AnimatePresence>

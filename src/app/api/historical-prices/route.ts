@@ -24,43 +24,43 @@ export async function POST(request: NextRequest) {
     switch (timeRange) {
       case "1w":
         startTime.setDate(now.getDate() - 7);
-        increment = 24 * 60 * 60 * 1000; // 1 day in ms
+        increment = 24 * 60 * 60 * 1000; 
         break;
 
       case "1m":
         startTime.setMonth(now.getMonth() - 1);
-        increment = 5 * 24 * 60 * 60 * 1000; // 5 days in ms
+        increment = 5 * 24 * 60 * 60 * 1000; 
         break;
 
       case "3m":
         startTime.setMonth(now.getMonth() - 3);
-        increment = 10 * 24 * 60 * 60 * 1000; // 10 days in ms
+        increment = 10 * 24 * 60 * 60 * 1000; 
         break;
 
       case "6m":
         startTime.setMonth(now.getMonth() - 6);
-        increment = 30 * 24 * 60 * 60 * 1000; // 1 month ≈ 30 days in ms
+        increment = 30 * 24 * 60 * 60 * 1000; 
         break;
 
       case "1y":
         startTime.setFullYear(now.getFullYear() - 1);
-        increment = 30 * 24 * 60 * 60 * 1000; // 1 month ≈ 30 days in ms
+        increment = 30 * 24 * 60 * 60 * 1000; 
         break;
 
       case "3y":
         startTime.setFullYear(now.getFullYear() - 3);
-        increment = 30 * 24 * 60 * 60 * 1000; // 1 month ≈ 30 days in ms
+        increment = 30 * 24 * 60 * 60 * 1000; 
         break;
 
       default:
         startTime.setDate(now.getDate() - 7);
-        increment = 24 * 60 * 60 * 1000; // 1 day in ms
+        increment = 24 * 60 * 60 * 1000; 
     }
 
   
 
-    // Convert to ISO string or UNIX timestamp if needed
-    const endTime = new Date(); // current date and time
+   
+    const endTime = new Date(); 
 
     const result = [];
 
@@ -121,22 +121,22 @@ export async function POST(request: NextRequest) {
             price: historyPrice,
           });
           console.log(result);
-          // Cache it for next time (optional)
+         
           await client.set(
             cacheKey,
             JSON.stringify({ historyPrice }),
-            { EX: 3600 * 24 } // expire in 24h (optional)
+            { EX: 3600 * 24 }
           );
         } catch (err) {
           console.error("❌ Error fetching historical price:", err);
-          // You might want to push a null or skip here to continue loop
+         
         }
       }
 
       startTime = new Date(startTime.getTime() + increment);
     }
 
-    // Cache the data if prices are available
+    
 
     return NextResponse.json({
       success: true,
