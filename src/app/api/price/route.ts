@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
 
 
 
-export const fetchHistoricalPrice = async (
+ const fetchHistoricalPrice = async (
   coinId: string,
   network: string,
   startTime: string,
@@ -188,7 +188,7 @@ export const fetchHistoricalPrice = async (
   return data?.data?.[0]?.value;
 };
 
-export const currentPrice = async (coinId: string, network: string) => {
+const currentPrice = async (coinId: string, network: string) => {
   const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
   if (!ALCHEMY_API_KEY) {
     throw new Error("Missing Alchemy API key.");
@@ -227,7 +227,7 @@ export const currentPrice = async (coinId: string, network: string) => {
   return data?.data?.[0]?.prices?.[0]?.value;
 };
 
-export const interPolatePrice = (
+const interPolatePrice = (
   currentTime: string,
   beforeTime: string,
   afterTime: string,

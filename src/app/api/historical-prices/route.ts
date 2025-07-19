@@ -153,7 +153,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export const fetchHistoricalPrice = async (
+const fetchHistoricalPrice = async (
   coinId: string,
   network: string,
   startTime: string,
