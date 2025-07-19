@@ -39,6 +39,7 @@ const Page = () => {
 
     const startUnix = Math.floor(new Date(startTime).getTime() / 1000);
 
+    toast.loading("Fetching price data...");
     console.log("Fetching price data for:", {
       tokenAddress,
       network,

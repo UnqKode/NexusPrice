@@ -46,39 +46,42 @@ const HistoricalPriceChart = () => {
     { label: "1Y", value: "1y" }
   ];
 
-  const fetchHistoricalData = async () => {
-    if (!tokenAddress || !network) {
-      toast.error("Token address and network are required");
-      return;
-    }
+const fetchHistoricalData = async () => {
+  if (!tokenAddress || !network) {
+    toast.error("Token address and network are required");
+    return;
+  }
 
-    setLoading(true);
-    try {
-      const response = await axios.post("/api/historical-prices", {
-        tokenAddress,
-        network,
-        timeRange,
+  setLoading(true);
+  const toastId = toast.loading("Fetching historical data..."); // store toast ID
+
+  try {
+    const response = await axios.post("/api/historical-prices", {
+      tokenAddress,
+      network,
+      timeRange,
+    });
+
+    const { data } = response;
+    if (data.success) {
+      const prices = data.data.map((item: PriceItem) => parseFloat(item.price));
+      setPriceRange({
+        min: Math.min(...prices),
+        max: Math.max(...prices),
       });
-
-      const { data } = response;
-      if (data.success) {
-       const prices = data.data.map((item: PriceItem) => parseFloat(item.price));
-        setPriceRange({
-          min: Math.min(...prices),
-          max: Math.max(...prices),
-        });
-        prepareChartData(data.data);
-        toast.success("Historical data loaded");
-      } else {
-        toast.error(data.message || "Failed to fetch data");
-      }
-    } catch (error) {
-      console.error("Error:", error);
-      toast.error("Error fetching data");
-    } finally {
-      setLoading(false);
+      prepareChartData(data.data);
+      toast.success("Historical data loaded", { id: toastId }); // update toast
+    } else {
+      toast.error(data.message || "Failed to fetch data", { id: toastId }); // update toast
     }
-  };
+  } catch (error) {
+    console.error("Error:", error);
+    toast.error("Error fetching data", { id: toastId }); // update toast
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   const prepareChartData = (prices: { date: string; price: number }[]) => {
     const formattedData = prices.map((item) => ({

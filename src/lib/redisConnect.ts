@@ -2,17 +2,16 @@ import { createClient } from 'redis';
 import dotenv from 'dotenv';
 dotenv.config();
 declare global {
-  // This avoids redeclaring the client on hot reloads (Next.js dev)
- 
+
   var _redisClient: ReturnType<typeof createClient> | undefined;
 }
 
-const client = global._redisClient ?? createClient({
+const client = globalThis._redisClient ?? createClient({
   username: 'default',
-  password: 'kT94DTMsUJiqwHwo5qthxj8nldrQIS5J',
+  password: process.env.REDIS_PASSWORD,
   socket: {
-    host: 'redis-15888.c212.ap-south-1-1.ec2.redns.redis-cloud.com',
-    port: 15888,
+    host: process.env.REDIS_HOST || 'localhost',
+    port: Number(process.env.REDIS_PORT) || 6379,
   },
 });
 

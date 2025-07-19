@@ -1,4 +1,9 @@
 // workers/priceWorker.ts
+
+
+
+//since worker is not a Next.js page, we need to import dotenv manually and i will be running this file on another server as its need to keep listing from the queue
+
 import { Worker, Job } from "bullmq";
 import dbConnect from "../lib/dbConnect";
 import Price from "../model/price.model";
@@ -11,9 +16,9 @@ if (!ALCHEMY_API_KEY) {
 }
 
 const connection = {
-  host: "redis-15888.c212.ap-south-1-1.ec2.redns.redis-cloud.com",
-  port: 15888,
-  password: "kT94DTMsUJiqwHwo5qthxj8nldrQIS5J",
+  host: process.env.REDIS_HOST ,
+  port: process.env.REDIS_PORT ,
+  password: process.env.REDIS_PASSWORD,
   retryDelayOnFailover: 100,
   maxRetriesPerRequest: 3,
   lazyConnect: true,
