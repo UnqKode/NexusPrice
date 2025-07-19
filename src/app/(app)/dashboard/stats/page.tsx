@@ -1,10 +1,28 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { motion } from "framer-motion";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { FiRefreshCw, FiExternalLink } from "react-icons/fi";
+import Link from "next/link";
+
+interface TooltipPayloadItem {
+  value: number;
+  [key: string]: any;
+}
+
+interface CustomTooltipProps {
+  active?: boolean;
+  payload?: TooltipPayloadItem[];
+  label?: string;
+}
+interface PriceItem {
+  price: string;  // or number if the API returns numbers
+  date?: string;  // add other fields as needed
+}
+
+
+
 
 const HistoricalPriceChart = () => {
   const [tokenAddress, setTokenAddress] = useState("");
@@ -38,7 +56,7 @@ const HistoricalPriceChart = () => {
 
       const { data } = response;
       if (data.success) {
-        const prices = data.data.map((item: any) => parseFloat(item.price));
+       const prices = data.data.map((item: PriceItem) => parseFloat(item.price));
         setPriceRange({
           min: Math.min(...prices),
           max: Math.max(...prices),
@@ -67,7 +85,7 @@ const HistoricalPriceChart = () => {
     setChartData(formattedData);
   };
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
+  const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
       return (
         <div className="bg-gray-800 border border-gray-700 rounded-lg p-3 shadow-lg">
@@ -261,14 +279,14 @@ const HistoricalPriceChart = () => {
           <div>
             Showing {chartData.length} data points for {tokenAddress.slice(0, 6)}...{tokenAddress.slice(-4)}
           </div>
-          <a 
+          <Link  
             href={`https://etherscan.io/token/${tokenAddress}`} 
             target="_blank" 
             rel="noopener noreferrer"
             className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors"
           >
             View on Etherscan <FiExternalLink className="w-3 h-3" />
-          </a>
+          </Link>
         </div>
       )}
     </div>

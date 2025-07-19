@@ -1,4 +1,4 @@
-import mongoose , { Schema, Document, Mongoose }from "mongoose";
+import mongoose , { Schema, Document }from "mongoose";
 
 export interface Price extends Document{
     tokenAddress: string;

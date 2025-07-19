@@ -59,7 +59,6 @@ const Page = () => {
         console.log("Price data fetched successfully:", data);
         setCurrentPrice(data.Current?.price ?? "0.00");
         setTimeStampPrice(data.History?.price ?? "0.00");
-        setHistoricalHigh(data.historicalHigh ?? "0.00"); // Note: This field isn't in your example response, so fallback to "0.00"
         toast.success("Price data fetched successfully");
         setTimeout(() => {
           if (data.History?.method) {
@@ -71,11 +70,12 @@ const Page = () => {
       } else {
         toast.error(data.message || "Failed to fetch price data");
       }
-    } catch (error: any) {
-      console.error("Error fetching price data:", error);
-      toast.error(
-        error?.response?.data?.message || "Error fetching price data"
-      );
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        toast.error(error.message);
+      } else {
+        toast.error("An unknown error occurred");
+      }
     }
   };
 
@@ -88,12 +88,11 @@ const Page = () => {
       network: network,
       timestamp: startTime,
     };
-    if(tokenAddress && network && startTime) {
+    if (tokenAddress && network && startTime) {
       const updatedHistory = [...fetchHistory, newEntry].slice(-4);
       localStorage.setItem("fetchHistory", JSON.stringify(updatedHistory));
       setFetchHistory(updatedHistory);
     }
-
   };
 
   function calculatePercentageChange(
@@ -131,11 +130,12 @@ const Page = () => {
       } else {
         toast.error(res.data.message);
       }
-    } catch (error: any) {
-      console.error("Error scheduling full history:", error);
-      toast.error(
-        error?.response?.data?.message || "Error scheduling full history"
-      );
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        toast.error(error.message);
+      } else {
+        toast.error("An unknown error occurred");
+      }
     }
   };
 

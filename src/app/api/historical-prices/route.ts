@@ -159,7 +159,7 @@ export const fetchHistoricalPrice = async (
   network: string,
   startTime: string,
   endTime: string
-): Promise<any> => {
+) => {
   const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
   if (!ALCHEMY_API_KEY) {
     throw new Error("Missing Alchemy API key.");
