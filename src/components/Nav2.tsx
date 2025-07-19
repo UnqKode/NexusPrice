@@ -18,7 +18,7 @@ const Nav = () => {
       {/* Top Navigation Bar */}
       <div className="bg-black/80 border border-white/40 backdrop-blur-lg px-4 py-3 rounded-md shadow-lg flex items-center justify-between">
         {/* Logo */}
-        <div className="flex items-center gap-3">
+        <Link href="/" className="flex items-center gap-3">
           <div className="w-9 h-9 bg-indigo-600 rounded-full flex items-center justify-center shadow-md">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -34,7 +34,7 @@ const Nav = () => {
           <span className="text-white text-lg font-semibold tracking-wide">
             Lexsu <span className="text-indigo-500">Price</span>
           </span>
-        </div>
+        </Link>
 
         {/* Hamburger / Close Icon */}
         <button
