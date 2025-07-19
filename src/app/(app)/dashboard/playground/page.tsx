@@ -39,7 +39,7 @@ const Page = () => {
 
     const startUnix = Math.floor(new Date(startTime).getTime() / 1000);
 
-    toast.loading("Fetching price data...");
+    const id = toast.loading("Fetching price data...");
     console.log("Fetching price data for:", {
       tokenAddress,
       network,
@@ -59,7 +59,7 @@ const Page = () => {
         console.log("Price data fetched successfully:", data);
         setCurrentPrice(data.Current?.price ?? "0.00");
         setTimeStampPrice(data.History?.price ?? "0.00");
-        toast.success("Price data fetched successfully");
+        toast.success("Price data fetched successfully",{ id : id});
         setTimeout(() => {
           if (data.History?.method) {
             toast.info("Fetch through: " + data.History?.method);
@@ -68,7 +68,7 @@ const Page = () => {
           }
         }, 2000);
       } else {
-        toast.error(data.message || "Failed to fetch price data");
+        toast.error(data.message || "Failed to fetch price data",{ id : id});
       }
     } catch (error: unknown) {
       if (error instanceof Error) {
