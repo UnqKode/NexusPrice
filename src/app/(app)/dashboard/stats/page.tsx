@@ -8,7 +8,7 @@ import Link from "next/link";
 
 interface TooltipPayloadItem {
   value: number;
-  [key: string]: any;
+  [key: string] : string | number;
 }
 
 interface CustomTooltipProps {
@@ -21,6 +21,12 @@ interface PriceItem {
   date?: string;  // add other fields as needed
 }
 
+interface ChartDataPoint {
+
+  date: string;
+  value: number;
+}
+
 
 
 
@@ -28,7 +34,7 @@ const HistoricalPriceChart = () => {
   const [tokenAddress, setTokenAddress] = useState("");
   const [network, setNetwork] = useState("");
   const [loading, setLoading] = useState(false);
-  const [chartData, setChartData] = useState<any[]>([]);
+  const [chartData, setChartData] = useState<ChartDataPoint[] >([]);
   const [timeRange, setTimeRange] = useState("1w");
   const [priceRange, setPriceRange] = useState({ min: 0, max: 0 });
 

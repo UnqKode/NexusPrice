@@ -60,7 +60,6 @@ export async function POST(request: NextRequest) {
   
 
     // Convert to ISO string or UNIX timestamp if needed
-    const startTimeISO = startTime.toISOString();
     const endTime = new Date(); // current date and time
 
     const result = [];

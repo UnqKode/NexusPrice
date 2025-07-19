@@ -6,7 +6,6 @@ import { motion } from "framer-motion";
 
 const Page = () => {
   const [currentPrice, setCurrentPrice] = useState("0.00");
-  const [historicalHigh, setHistoricalHigh] = useState("0.00");
   const [TimeStampPrice, setTimeStampPrice] = useState("0.00");
   const [tokenAddress, setTokenAddress] = useState("");
   const [network, setNetwork] = useState("");

@@ -172,7 +172,7 @@ const processor = async (
     const today = new Date(new Date().setUTCHours(0, 0, 0, 0));
     console.log(`📅 Fetching prices from ${startDate.toISOString()} to ${today.toISOString()}`);
 
-    let currentDate = new Date(startDate);
+    const currentDate = new Date(startDate);
     let processedDays = 0;
     let savedPrices = 0;
 

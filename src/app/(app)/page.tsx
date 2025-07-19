@@ -8,7 +8,6 @@ import { FiTrendingUp, FiDatabase, FiCode, FiBarChart2 } from "react-icons/fi";
 
 const Page = () => {
   
-
   const features = [
     {
       icon: <FiDatabase className="text-3xl mb-4 text-indigo-400" />,
@@ -18,7 +17,7 @@ const Page = () => {
     {
       icon: <FiTrendingUp className="text-3xl mb-4 text-indigo-400" />,
       title: "Smart Interpolation",
-      description: "Get accurate estimates even when exact prices aren't available."
+      description: "Get accurate estimates even when exact prices are not available."
     },
     {
       icon: <FiBarChart2 className="text-3xl mb-4 text-indigo-400" />,
@@ -146,7 +145,7 @@ const Page = () => {
               <div className="flex flex-col md:flex-row items-center gap-8">
                 <div className="md:w-1/2">
                   <h3 className="text-2xl font-bold text-white mb-4">
-                    Visualize Your Token's Journey
+                   Token Price History
                   </h3>
                   <p className="text-gray-300 mb-6">
                     Plot comprehensive price graphs for any ERC20 token across multiple timeframes. 

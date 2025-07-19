@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 declare global {
   // This avoids redeclaring the client on hot reloads (Next.js dev)
-  // @ts-ignore
+ 
   var _redisClient: ReturnType<typeof createClient> | undefined;
 }
 
