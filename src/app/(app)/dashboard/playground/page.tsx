@@ -12,14 +12,14 @@ const Page = () => {
   const [startTime, setStartTime] = useState("");
   const [fetchHistory, setFetchHistory] = useState<
     { coinId: string; network: string; timestamp: string }[]
-  >(() => {
-    const historyRaw = localStorage.getItem("fetchHistory");
-    return historyRaw ? JSON.parse(historyRaw) : [];
-  });
+  >([]);
 
   useEffect(() => {
-    console.log("Recent fetches:", fetchHistory);
-  }, [fetchHistory]);
+    const historyRaw = localStorage.getItem("fetchHistory");
+    if (historyRaw) {
+      setFetchHistory(JSON.parse(historyRaw));
+    }
+  }, []);
 
   const onFetchPriceData = async () => {
     if (!tokenAddress) {
@@ -186,6 +186,7 @@ const Page = () => {
                 </label>
                 <select
                   className="w-full bg-gray-800/50 border border-gray-700 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  value={network}
                   onChange={(e) => setNetwork(e.target.value)}
                 >
                   <option value="">Select network</option>
@@ -353,7 +354,7 @@ const Page = () => {
                     Token: <span className="text-blue-400">{item.coinId}</span>
                   </p>
                   <p className="text-gray-400 text-sm">
-                    {new Date(parseInt(item.timestamp)).toLocaleString()}
+                    {new Date(item.timestamp).toLocaleString()}
                   </p>
                 </div>
                 <p className="text-gray-300 text-sm">Network: {item.network}</p>
