@@ -1,16 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Queue } from "bullmq"; // Import the Queue class
 import dbConnect from "@/lib/dbConnect";
-
-const QUEUE_NAME = "price-history-queue";
-
-const priceHistoryQueue = new Queue(QUEUE_NAME, {
-  connection: {
-    host: process.env.REDIS_HOST,
-    port: parseInt(process.env.REDIS_PORT || "15878"),
-    password: process.env.REDIS_PASSWORD,
-  },
-});
+import { historyJobId } from "@/lib/jobId";
+import priceHistoryQueue from "@/lib/priceHistoryQueue";
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,13 +17,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-   
-    await priceHistoryQueue.add("fetch-history", { coinId, network });
+    const jobId = historyJobId(coinId, network);
+    await priceHistoryQueue.add(
+      "fetch-history",
+      { coinId, network },
+      {
+        jobId, // re-scheduling the same token/network while a job is pending/active is a no-op
+        attempts: 3,
+        backoff: { type: "exponential", delay: 2000 },
+      }
+    );
     console.log(`✅ Job added to queue for ${coinId} on ${network}.`);
 
     return NextResponse.json({
       success: true,
       message: `History fetch for ${coinId} has been scheduled.`,
+      jobId,
     });
   } catch (error: unknown) {
     let message = "Unknown error";

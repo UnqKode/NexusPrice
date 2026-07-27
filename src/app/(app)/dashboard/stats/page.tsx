@@ -2,7 +2,7 @@
 import React, { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { FiRefreshCw, FiExternalLink } from "react-icons/fi";
 import Link from "next/link";
 
@@ -19,12 +19,20 @@ interface CustomTooltipProps {
 interface PriceItem {
   price: string;  // or number if the API returns numbers
   date?: string;  // add other fields as needed
+  sma?: number | null;
 }
 
 interface ChartDataPoint {
-
   date: string;
   value: number;
+  sma: number | null;
+}
+
+interface AnalyticsSummary {
+  percentChange: number;
+  volatility: number;
+  min: number;
+  max: number;
 }
 
 
@@ -37,6 +45,7 @@ const HistoricalPriceChart = () => {
   const [chartData, setChartData] = useState<ChartDataPoint[] >([]);
   const [timeRange, setTimeRange] = useState("1w");
   const [priceRange, setPriceRange] = useState({ min: 0, max: 0 });
+  const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
 
   const timeRanges = [
     { label: "1W", value: "1w" },
@@ -69,6 +78,7 @@ const fetchHistoricalData = async () => {
         min: Math.min(...prices),
         max: Math.max(...prices),
       });
+      setSummary(data.summary ?? null);
       prepareChartData(data.data);
       toast.success("Historical data loaded", { id: toastId }); // update toast
     } else {
@@ -83,13 +93,14 @@ const fetchHistoricalData = async () => {
 };
 
 
-  const prepareChartData = (prices: { date: string; price: number }[]) => {
+  const prepareChartData = (prices: PriceItem[]) => {
     const formattedData = prices.map((item) => ({
-      date: new Date(item.date).toLocaleDateString("en-US", {
+      date: new Date(item.date ?? "").toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
       }),
-      value: item.price,
+      value: parseFloat(item.price),
+      sma: item.sma ?? null,
     }));
     setChartData(formattedData);
   };
@@ -204,7 +215,32 @@ const fetchHistoricalData = async () => {
         </div>
       </div>
 
-  
+      {summary && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div className="bg-gray-800/50 border border-gray-700/50 rounded-lg p-4">
+            <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">% Change</p>
+            <p className={`text-xl font-bold ${summary.percentChange >= 0 ? "text-green-400" : "text-red-400"}`}>
+              {summary.percentChange >= 0 ? "+" : ""}
+              {summary.percentChange.toFixed(2)}%
+            </p>
+          </div>
+          <div className="bg-gray-800/50 border border-gray-700/50 rounded-lg p-4">
+            <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Volatility</p>
+            <p className="text-xl font-bold text-white">{summary.volatility.toFixed(2)}%</p>
+            <p className="text-xs text-gray-500 mt-0.5">stddev of period returns</p>
+          </div>
+          <div className="bg-gray-800/50 border border-gray-700/50 rounded-lg p-4">
+            <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Min</p>
+            <p className="text-xl font-bold text-white">${summary.min.toFixed(4)}</p>
+          </div>
+          <div className="bg-gray-800/50 border border-gray-700/50 rounded-lg p-4">
+            <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Max</p>
+            <p className="text-xl font-bold text-white">${summary.max.toFixed(4)}</p>
+          </div>
+        </div>
+      )}
+
+
       <div className="mt-6 h-[400px] relative">
         {chartData.length > 0 ? (
           <>
@@ -217,7 +253,7 @@ const fetchHistoricalData = async () => {
               </div>
             </div>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart
+              <ComposedChart
                 data={chartData}
                 margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
               >
@@ -228,28 +264,38 @@ const fetchHistoricalData = async () => {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.5} />
-                <XAxis 
-                  dataKey="date" 
-                  stroke="#9CA3AF" 
+                <XAxis
+                  dataKey="date"
+                  stroke="#9CA3AF"
                   tick={{ fontSize: 12 }}
                   tickMargin={10}
                 />
-                <YAxis 
-                  stroke="#9CA3AF" 
+                <YAxis
+                  stroke="#9CA3AF"
                   tickFormatter={(value) => `$${value.toFixed(2)}`}
                   width={80}
                 />
-                <Tooltip 
-                  content={<CustomTooltip />} 
+                <Tooltip
+                  content={<CustomTooltip />}
                   cursor={{ fill: 'rgba(99, 102, 241, 0.1)' }}
                 />
-                <Bar 
-                  dataKey="value" 
-                  fill="url(#colorValue)" 
+                <Bar
+                  dataKey="value"
+                  fill="url(#colorValue)"
                   radius={[6, 6, 0, 0]}
                   animationDuration={1500}
                 />
-              </BarChart>
+                <Line
+                  type="monotone"
+                  dataKey="sma"
+                  name="5-period SMA"
+                  stroke="#facc15"
+                  strokeWidth={2}
+                  dot={false}
+                  connectNulls
+                  animationDuration={1500}
+                />
+              </ComposedChart>
             </ResponsiveContainer>
           </>
         ) : (

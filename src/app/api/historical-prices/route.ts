@@ -1,5 +1,13 @@
 import client from "@/lib/redisConnect";
+import { summarize } from "@/lib/analytics";
 import { NextRequest, NextResponse } from "next/server";
+
+interface HistoricalPricePoint {
+  date: string;
+  price: string | number;
+  method?: string;
+  sma?: number | null;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -60,9 +68,9 @@ export async function POST(request: NextRequest) {
   
 
    
-    const endTime = new Date(); 
+    const endTime = new Date();
 
-    const result = [];
+    const result: HistoricalPricePoint[] = [];
 
     while (startTime < endTime) {
       const cacheKey = `price:${tokenAddress.toLowerCase()}:${network.toLowerCase()}:${startTime.toISOString()}`;
@@ -136,12 +144,30 @@ export async function POST(request: NextRequest) {
       startTime = new Date(startTime.getTime() + increment);
     }
 
-    
+    // Some buckets may be missing a price (upstream fetch failed for that
+    // day - see the catch block above, which silently skips rather than
+    // recording a gap). Only compute analytics over buckets that actually
+    // resolved to a real number, and attach the matching SMA value back onto
+    // those same entries so the series and its moving average stay aligned.
+    const resolvedEntries = result.filter(
+      (entry) => entry.price !== undefined && entry.price !== null && !isNaN(parseFloat(String(entry.price)))
+    );
+    const numericPrices = resolvedEntries.map((entry) => parseFloat(String(entry.price)));
+    const analytics = summarize(numericPrices, 5);
+    resolvedEntries.forEach((entry, i) => {
+      entry.sma = analytics.sma[i];
+    });
 
     return NextResponse.json({
       success: true,
       status: 200,
       data: result,
+      summary: {
+        percentChange: analytics.percentChange,
+        volatility: analytics.volatility,
+        min: analytics.min,
+        max: analytics.max,
+      },
       message: "Historical prices fetched successfully",
     });
   } catch (error) {
