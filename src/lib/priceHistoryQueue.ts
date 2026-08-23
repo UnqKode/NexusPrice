@@ -14,7 +14,12 @@ const priceHistoryQueue =
   new Queue(QUEUE_NAME, {
     connection: {
       host: process.env.REDIS_HOST,
-      port: parseInt(process.env.REDIS_PORT || "15878"),
+      // Standard Redis default, matching redisConnect.ts and priceWorker.ts
+      // - this previously defaulted to "15878", a leftover from one
+      // specific Redis Cloud instance's assigned port, meaning this module
+      // and redisConnect.ts silently pointed at different ports whenever
+      // REDIS_PORT was unset.
+      port: parseInt(process.env.REDIS_PORT || "6379"),
       password: process.env.REDIS_PASSWORD,
     },
   });

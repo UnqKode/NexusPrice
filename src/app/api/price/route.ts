@@ -1,7 +1,20 @@
 import client from "@/lib/redisConnect";
 import { getWithSingleFlight } from "@/lib/priceCache";
 import { interPolatePrice } from "@/lib/interpolation";
+import { toAlchemyNetwork } from "@/lib/networks";
+import { guardRoute } from "@/lib/routeGuard";
+import { isValidTokenAddress } from "@/lib/validation";
+import { logger } from "@/lib/logger";
 import { NextRequest, NextResponse } from "next/server";
+
+// Read/lookup route, not admin-only - generous enough for normal dashboard
+// use, tight enough to bound a runaway script. See README "API
+// authentication and rate limiting" for the full policy across routes.
+// failClosedOnRedisError: this route calls Alchemy directly (not via the
+// queue) and priceCache also fails open during a Redis outage - so without
+// this, an outage would mean every request becomes an unthrottled real
+// Alchemy call. See RateLimitOptions.failClosed in rateLimit.ts.
+const RATE_LIMIT = { routeName: "price", limit: 60, windowSeconds: 60, failClosedOnRedisError: true };
 
 // "Current" price is volatile - short freshness window, single-flight +
 // stale-while-revalidate so a popular token's expiring cache entry doesn't
@@ -22,8 +35,27 @@ const HISTORY_CACHE = {
 const dayBucket = (unixSeconds: string): number =>
   Math.floor(parseInt(unixSeconds, 10) / 86400) * 86400;
 
+// Lets the benchmark harness (scripts/benchmark.mjs) measure genuine
+// uncached upstream latency as a real "before" number, not an inferred one -
+// without this there's no way to see what a request costs with the cache
+// infrastructure completely out of the picture, only "first request" (cold),
+// which still pays Redis GET/lock-acquire overhead on the way to the miss.
+// Gated behind an env var so the header has no effect at all unless the
+// operator explicitly opts in - a caller can send x-bypass-cache on a
+// production deployment with ALLOW_CACHE_BYPASS unset and it's a silent
+// no-op, not a way to force-drain Alchemy quota on demand.
+const CACHE_BYPASS_HEADER = "x-bypass-cache";
+const CACHE_BYPASS_SOURCE = "bypass-header";
+
+function cacheBypassRequested(request: NextRequest): boolean {
+  return process.env.ALLOW_CACHE_BYPASS === "true" && request.headers.get(CACHE_BYPASS_HEADER) === "1";
+}
+
 export async function POST(request: NextRequest) {
   try {
+    const guard = await guardRoute(request, client, RATE_LIMIT);
+    if (!guard.ok) return guard.response;
+
     const body = await request.json();
     const { coinId, network, startTime } = body;
 
@@ -33,7 +65,14 @@ export async function POST(request: NextRequest) {
           success: false,
           message: "coinId, network, and startTime are required",
         },
-        { status: 400 }
+        { status: 400, headers: guard.headers }
+      );
+    }
+
+    if (!isValidTokenAddress(coinId)) {
+      return NextResponse.json(
+        { success: false, message: "coinId must be a valid token address (0x + 40 hex chars)" },
+        { status: 400, headers: guard.headers }
       );
     }
 
@@ -41,40 +80,36 @@ export async function POST(request: NextRequest) {
     if (!ALCHEMY_API_KEY) {
       return NextResponse.json(
         { success: false, message: "Missing Alchemy API key." },
-        { status: 500 }
+        { status: 500, headers: guard.headers }
       );
     }
 
-    const networkMap: Record<string, string> = {
-      ethereum: "eth-mainnet",
-      polygon: "polygon-mainnet",
-      arbitrum: "arb-mainnet",
-      optimism: "opt-mainnet",
-      base: "base-mainnet",
-      bsc: "bsc-mainnet",
-      avalanche: "avax-mainnet",
-    };
-
-    const alchemyNetwork = networkMap[network.toLowerCase()] || network;
+    const alchemyNetwork = toAlchemyNetwork(network);
     const coinKey = coinId.toLowerCase();
     const networkKey = network.toLowerCase();
 
     const currentKey = `price:current:${coinKey}:${networkKey}`;
     const historyKey = `price:hist:${coinKey}:${networkKey}:${dayBucket(startTime)}`;
+    const bypassCache = cacheBypassRequested(request);
 
     let currentPriceData: string | undefined;
     let currentPriceSource: string | undefined;
     try {
-      const result = await getWithSingleFlight(
-        client,
-        currentKey,
-        () => currentPrice(coinId, alchemyNetwork),
-        CURRENT_PRICE_CACHE
-      );
-      currentPriceData = result.data;
-      currentPriceSource = result.source;
+      if (bypassCache) {
+        currentPriceData = await currentPrice(coinId, alchemyNetwork);
+        currentPriceSource = CACHE_BYPASS_SOURCE;
+      } else {
+        const result = await getWithSingleFlight(
+          client,
+          currentKey,
+          () => currentPrice(coinId, alchemyNetwork),
+          CURRENT_PRICE_CACHE
+        );
+        currentPriceData = result.data;
+        currentPriceSource = result.source;
+      }
     } catch (err) {
-      console.error("❌ Error fetching current price:", err);
+      logger.error("❌ Error fetching current price:", err);
       currentPriceData = undefined;
     }
 
@@ -83,17 +118,24 @@ export async function POST(request: NextRequest) {
     let historySource: string | undefined;
 
     try {
-      const result = await getWithSingleFlight(
-        client,
-        historyKey,
-        () => fetchHistoryWithFallback(coinId, alchemyNetwork, startTime),
-        HISTORY_CACHE
-      );
-      finalHistoryPrice = result.data.price;
-      method = result.data.method;
-      historySource = result.source;
+      if (bypassCache) {
+        const result = await fetchHistoryWithFallback(coinId, alchemyNetwork, startTime);
+        finalHistoryPrice = result.price;
+        method = result.method;
+        historySource = CACHE_BYPASS_SOURCE;
+      } else {
+        const result = await getWithSingleFlight(
+          client,
+          historyKey,
+          () => fetchHistoryWithFallback(coinId, alchemyNetwork, startTime),
+          HISTORY_CACHE
+        );
+        finalHistoryPrice = result.data.price;
+        method = result.data.method;
+        historySource = result.source;
+      }
     } catch (err) {
-      console.warn("⚠️ No history data available even after interpolation fallback:", err);
+      logger.warn("⚠️ No history data available even after interpolation fallback:", err);
       finalHistoryPrice = currentPriceData ?? null;
       method = currentPriceData ? "current fallback" : "none";
     }
@@ -106,15 +148,18 @@ export async function POST(request: NextRequest) {
     // this endpoint - see the benchmark harness for how this is measured.
     const degraded = method === "none" || currentPriceData === undefined;
 
-    return NextResponse.json({
-      success: true,
-      status: 200,
-      degraded,
-      Current: { price: currentPriceData || null, cache: currentPriceSource },
-      History: { price: finalHistoryPrice ?? null, method, cache: historySource },
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        status: 200,
+        degraded,
+        Current: { price: currentPriceData || null, cache: currentPriceSource },
+        History: { price: finalHistoryPrice ?? null, method, cache: historySource },
+      },
+      { headers: guard.headers }
+    );
   } catch (error) {
-    console.error("❌ Error in /api/price:", error);
+    logger.error("❌ Error in /api/price:", error);
     return NextResponse.json(
       { success: false, message: "Internal Server Error" },
       { status: 500 }
@@ -136,7 +181,7 @@ async function fetchHistoryWithFallback(
       (parseInt(startTime) + 60).toString() // 1 minute after startTime for a range
     );
   } catch (err) {
-    console.error("❌ Error fetching historical price:", err);
+    logger.error("❌ Error fetching historical price:", err);
     historyPrice = undefined;
   }
 
@@ -144,7 +189,7 @@ async function fetchHistoryWithFallback(
     return { price: historyPrice, method: "alchemy" };
   }
 
-  console.warn(
+  logger.warn(
     "⚠️ Historical price data is null or undefined, attempting interpolation."
   );
 
@@ -209,22 +254,25 @@ async function fetchHistoryWithFallback(
     endTime: new Date(parseInt(endTime) * 1000).toISOString(),
   };
 
-  console.log("Sending request to Alchemy with body:", body);
+  logger.debug("Sending request to Alchemy with body:", body);
 
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    // Below priceCache's lockTtlMs (10s default) - a hung Alchemy call must
+    // fail before it could hold a single-flight lock for its full duration.
+    signal: AbortSignal.timeout(8_000),
     body: JSON.stringify(body),
   });
 
   if (!response.ok) {
     const errorData = await response.json();
-    console.error("🔴 Alchemy API error response:", errorData);
+    logger.error("🔴 Alchemy API error response:", errorData);
     throw new Error(`API error: ${response.status} ${response.statusText}`);
   }
 
   const data = await response.json();
-  console.log(
+  logger.debug(
     "✅ Full Alchemy API response received:",
     JSON.stringify(data, null, 2)
   );
@@ -248,22 +296,23 @@ const currentPrice = async (coinId: string, network: string) => {
     ],
   };
 
-  console.log("Sending request to Alchemy with body:", body);
+  logger.debug("Sending request to Alchemy with body:", body);
 
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(8_000),
     body: JSON.stringify(body),
   });
 
   if (!response.ok) {
     const errorData = await response.json();
-    console.error("🔴 Alchemy API error response:", errorData);
+    logger.error("🔴 Alchemy API error response:", errorData);
     throw new Error(`API error: ${response.status} ${response.statusText}`);
   }
 
   const data = await response.json();
-  console.log(
+  logger.debug(
     "✅ Full Alchemy API response received:",
     JSON.stringify(data, null, 2)
   );

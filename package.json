@@ -10,7 +10,8 @@
     "lint": "next lint",
     "worker": "tsx src/worker/priceWorker.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:tz-adversarial": "vitest run --config vitest.adversarial-tz.config.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.14",

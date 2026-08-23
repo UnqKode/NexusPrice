@@ -12,7 +12,7 @@ const Nav = () => {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 1 }}
+      transition={{ duration: 0.3 }}
       className="z-50 max-w-4xl md:hidden my-5 relative"
     >
       {/* Top Navigation Bar */}
@@ -32,7 +32,7 @@ const Nav = () => {
             </svg>
           </div>
           <span className="text-white text-lg font-semibold tracking-wide">
-            Lexsu <span className="text-indigo-500">Price</span>
+            Nexus <span className="text-indigo-500">Price</span>
           </span>
         </Link>
 
@@ -55,9 +55,9 @@ const Nav = () => {
         >
           <div className="flex flex-col p-3">
             {[
-              { label: "Plaground", href: "/dashboard/playground" },
+              { label: "Playground", href: "/dashboard/playground" },
               { label: "Graphs", href: "/dashboard/stats" },
-              { label: "Setting", href: "/" }   
+              { label: "Settings", href: "/" }
             ].map(({ label, href }) => (
               <Link
                 key={label}

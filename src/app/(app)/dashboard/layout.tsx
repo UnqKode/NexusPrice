@@ -3,11 +3,13 @@ import { usePathname, useRouter } from 'next/navigation';
 import React, { ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
+import { useSession, signOut } from 'next-auth/react';
 import Nav2 from '@/components/Nav2';
 
 const DashboardLayout = ({ children }: { children: ReactNode }) => {
   const pathname = usePathname();
   const router = useRouter();
+  const { data: session } = useSession();
 
   const lastSegment = pathname.split('/').filter(Boolean).pop();
 
@@ -107,6 +109,25 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
             </motion.button>
           ))}
         </nav>
+
+        {/* Signed-in identity + logout. The dashboard's API calls authenticate
+            via this next-auth session cookie (see src/lib/apiAuth.ts), so the
+            UI needs a visible way to sign out - previously there was none. */}
+        <div className="mt-8 border-t border-gray-800 pt-4">
+          {session?.user?.email && (
+            <p className="text-xs text-gray-500 mb-2 truncate" title={session.user.email}>
+              Signed in as{' '}
+              <span className="text-gray-300">{session.user.email}</span>
+            </p>
+          )}
+          <button
+            onClick={() => signOut({ callbackUrl: '/' })}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-left text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
+          >
+            <LogoutIcon />
+            <span>Log out</span>
+          </button>
+        </div>
       </motion.div>
 
     
@@ -114,11 +135,11 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
         <AnimatePresence mode="wait">
            <motion.div
             key={pathname}
-            initial={{ opacity: 0, y: 50 }}
+            initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -50 }}
-            transition={{ 
-              duration: 1,
+            exit={{ opacity: 0, y: -8 }}
+            transition={{
+              duration: 0.2,
               ease: [0.22, 1, 0.36, 1] // Smooth easing curve
             }}
           >
@@ -134,6 +155,21 @@ const DashboardLayout = ({ children }: { children: ReactNode }) => {
 // ... (keep your existing icon components)
 
 export default DashboardLayout;
+
+const LogoutIcon = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    className="h-5 w-5"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" />
+  </svg>
+);
 
 
 const DashboardIcon = () => (

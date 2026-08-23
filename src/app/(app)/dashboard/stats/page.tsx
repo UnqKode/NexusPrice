@@ -283,7 +283,7 @@ const fetchHistoricalData = async () => {
                   dataKey="value"
                   fill="url(#colorValue)"
                   radius={[6, 6, 0, 0]}
-                  animationDuration={1500}
+                  animationDuration={500}
                 />
                 <Line
                   type="monotone"
@@ -293,7 +293,7 @@ const fetchHistoricalData = async () => {
                   strokeWidth={2}
                   dot={false}
                   connectNulls
-                  animationDuration={1500}
+                  animationDuration={500}
                 />
               </ComposedChart>
             </ResponsiveContainer>

@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...except the template - .env* above was silently swallowing this too,
+# which meant it could never actually be committed for other developers to use.
+!.env.example
 
 # vercel
 .vercel

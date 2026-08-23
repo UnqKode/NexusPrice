@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 
 // route.ts imports the real Redis client from "@/lib/redisConnect", which
@@ -32,16 +32,35 @@ class FakeRedis {
   async del(key: string) {
     return this.store.delete(key) ? 1 : 0;
   }
+  // Only implements the exact compare-and-delete script priceCache.ts
+  // actually sends - not a general Lua interpreter. See priceCache.test.ts.
+  async eval(_script: string, options: { keys: string[]; arguments: string[] }) {
+    const [key] = options.keys;
+    const [expectedValue] = options.arguments;
+    if (this.readSync(key) === expectedValue) {
+      this.store.delete(key);
+      return 1;
+    }
+    return 0;
+  }
 }
 
 const fakeRedis = new FakeRedis();
 vi.mock("@/lib/redisConnect", () => ({ default: fakeRedis }));
 
+// Auth/rate-limiting is tested in its own right in routeGuard.test.ts and
+// the "authentication and rate limiting" describe block below - mocked
+// here so the rest of this file can stay focused on cache/interpolation
+// behavior, which is what it was written to cover.
+const guardRouteMock = vi.fn();
+vi.mock("@/lib/routeGuard", () => ({ guardRoute: (...args: unknown[]) => guardRouteMock(...args) }));
+
 const { POST } = await import("./route");
 
-function makeRequest(body: unknown): NextRequest {
+function makeRequest(body: unknown, headers: Record<string, string> = {}): NextRequest {
   return new NextRequest("http://localhost/api/price", {
     method: "POST",
+    headers,
     body: JSON.stringify(body),
   });
 }
@@ -51,9 +70,22 @@ function jsonResponse(body: unknown, ok = true, status = 200) {
 }
 
 describe("POST /api/price", () => {
+  const originalAllowCacheBypass = process.env.ALLOW_CACHE_BYPASS;
+
   beforeEach(() => {
     vi.restoreAllMocks();
     process.env.ALCHEMY_API_KEY = "test-key";
+    delete process.env.ALLOW_CACHE_BYPASS;
+    guardRouteMock.mockReset().mockResolvedValue({
+      ok: true,
+      identity: { id: "test-key", scope: "read", via: "api-key" },
+      headers: {},
+    });
+  });
+
+  afterEach(() => {
+    if (originalAllowCacheBypass === undefined) delete process.env.ALLOW_CACHE_BYPASS;
+    else process.env.ALLOW_CACHE_BYPASS = originalAllowCacheBypass;
   });
 
   it("returns the exact Alchemy price when history data is available (no interpolation needed)", async () => {
@@ -67,7 +99,7 @@ describe("POST /api/price", () => {
     global.fetch = fetchMock as unknown as typeof fetch;
 
     const res = await POST(
-      makeRequest({ coinId: "0xToken1", network: "ethereum", startTime: "1700000000" })
+      makeRequest({ coinId: "0x000000000000000000000000000000000000A001", network: "ethereum", startTime: "1700000000" })
     );
     const body = await res.json();
 
@@ -75,6 +107,12 @@ describe("POST /api/price", () => {
     expect(body.degraded).toBe(false);
     expect(body.History.method).toBe("alchemy");
     expect(body.History.price).toBe("101.5");
+
+    // Task 8b: every Alchemy call must carry an abort signal so a hung
+    // upstream fails fast instead of holding a single-flight lock forever.
+    for (const call of fetchMock.mock.calls) {
+      expect(call[1]?.signal).toBeInstanceOf(AbortSignal);
+    }
   });
 
   it("falls back to interpolation when the exact historical price is unavailable", async () => {
@@ -87,7 +125,7 @@ describe("POST /api/price", () => {
     global.fetch = fetchMock as unknown as typeof fetch;
 
     const res = await POST(
-      makeRequest({ coinId: "0xToken2", network: "ethereum", startTime: "1700000000" })
+      makeRequest({ coinId: "0x000000000000000000000000000000000000A002", network: "ethereum", startTime: "1700000000" })
     );
     const body = await res.json();
 
@@ -109,7 +147,7 @@ describe("POST /api/price", () => {
     global.fetch = fetchMock as unknown as typeof fetch;
 
     const res = await POST(
-      makeRequest({ coinId: "0xTokenTooOld", network: "ethereum", startTime: "1700000000" })
+      makeRequest({ coinId: "0x000000000000000000000000000000000000A003", network: "ethereum", startTime: "1700000000" })
     );
     const body = await res.json();
 
@@ -122,7 +160,7 @@ describe("POST /api/price", () => {
     global.fetch = fetchMock as unknown as typeof fetch;
 
     const res = await POST(
-      makeRequest({ coinId: "0xToken3", network: "ethereum", startTime: "1700000000" })
+      makeRequest({ coinId: "0x000000000000000000000000000000000000A004", network: "ethereum", startTime: "1700000000" })
     );
     const body = await res.json();
 
@@ -139,7 +177,7 @@ describe("POST /api/price", () => {
       .mockResolvedValueOnce(jsonResponse({ data: [{ value: "77" }] })); // fetchHistoricalPrice
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const reqBody = { coinId: "0xToken4", network: "ethereum", startTime: "1700000000" };
+    const reqBody = { coinId: "0x000000000000000000000000000000000000A005", network: "ethereum", startTime: "1700000000" };
     const first = await POST(makeRequest(reqBody));
     await first.json();
 
@@ -153,7 +191,85 @@ describe("POST /api/price", () => {
   });
 
   it("rejects a request missing required fields with 400, not a silent failure", async () => {
-    const res = await POST(makeRequest({ coinId: "0xToken5" }));
+    const res = await POST(makeRequest({ coinId: "0x000000000000000000000000000000000000A006" }));
     expect(res.status).toBe(400);
+  });
+
+  describe("cache bypass (x-bypass-cache, gated by ALLOW_CACHE_BYPASS)", () => {
+    // Distinct coinId per test - this file's FakeRedis is a shared, never-
+    // reset singleton (see its top-of-file comment), so reusing a key across
+    // tests here would let an earlier test's cache write leak into a later
+    // test that's specifically trying to observe a genuine cache miss.
+    const bodyFor = (suffix: string) => ({
+      coinId: `0x${"0".repeat(40 - suffix.length)}${suffix}`,
+      network: "ethereum",
+      startTime: "1700000000",
+    });
+
+    it("ignores the header when ALLOW_CACHE_BYPASS is unset, even if the request sends it", async () => {
+      delete process.env.ALLOW_CACHE_BYPASS;
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ data: [{ prices: [{ value: "1" }] }] }))
+        .mockResolvedValueOnce(jsonResponse({ data: [{ value: "1" }] }));
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const res = await POST(makeRequest(bodyFor("B001"), { "x-bypass-cache": "1" }));
+      const body = await res.json();
+
+      expect(body.Current.cache).not.toBe("bypass-header");
+      expect(body.History.cache).not.toBe("bypass-header");
+    });
+
+    it("skips the cache and calls upstream directly when ALLOW_CACHE_BYPASS=true and the header is sent", async () => {
+      process.env.ALLOW_CACHE_BYPASS = "true";
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ data: [{ prices: [{ value: "1" }] }] }))
+        .mockResolvedValueOnce(jsonResponse({ data: [{ value: "1" }] }));
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const res = await POST(makeRequest(bodyFor("B002"), { "x-bypass-cache": "1" }));
+      const body = await res.json();
+
+      expect(body.Current.cache).toBe("bypass-header");
+      expect(body.History.cache).toBe("bypass-header");
+    });
+
+    it("does not populate the cache on a bypassed request, so a following normal request still misses", async () => {
+      const reqBody = bodyFor("B003");
+      process.env.ALLOW_CACHE_BYPASS = "true";
+      const bypassFetch = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ data: [{ prices: [{ value: "1" }] }] }))
+        .mockResolvedValueOnce(jsonResponse({ data: [{ value: "1" }] }));
+      global.fetch = bypassFetch as unknown as typeof fetch;
+      await POST(makeRequest(reqBody, { "x-bypass-cache": "1" }));
+
+      delete process.env.ALLOW_CACHE_BYPASS;
+      const normalFetch = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ data: [{ prices: [{ value: "2" }] }] }))
+        .mockResolvedValueOnce(jsonResponse({ data: [{ value: "2" }] }));
+      global.fetch = normalFetch as unknown as typeof fetch;
+      const res = await POST(makeRequest(reqBody));
+      const body = await res.json();
+
+      // A real upstream call happened for the second request too - proof the
+      // bypassed request never wrote a cache entry the normal path could hit.
+      expect(normalFetch).toHaveBeenCalled();
+      expect(body.Current.cache).not.toBe("bypass-header");
+    });
+
+    it("still requires a valid api key / session - the bypass header is not an auth bypass", async () => {
+      process.env.ALLOW_CACHE_BYPASS = "true";
+      guardRouteMock.mockResolvedValue({
+        ok: false,
+        response: new Response(JSON.stringify({ success: false, message: "unauthorized" }), { status: 401 }),
+      });
+
+      const res = await POST(makeRequest(bodyFor("B004"), { "x-bypass-cache": "1" }));
+      expect(res.status).toBe(401);
+    });
   });
 });

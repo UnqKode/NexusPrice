@@ -109,6 +109,21 @@ const Page = () => {
     }
   };
 
+  // The two price values are held as strings (and Current can arrive from the
+  // API as a number), and the display previously called `.toLocaleString()`
+  // directly on them - a no-op on a string, and a lossy 3-decimal round on a
+  // number, which rendered a $0.000021 token as "$0". This formats by
+  // magnitude so both large and sub-cent token prices read correctly.
+  const formatPrice = (value: string | number | null | undefined): string => {
+    if (value === null || value === undefined || value === "") return "--";
+    const num = typeof value === "number" ? value : parseFloat(value);
+    if (!isFinite(num)) return "--";
+    if (num === 0) return "0.00";
+    if (num >= 1) return num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (num >= 0.01) return num.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+    return num.toLocaleString("en-US", { minimumFractionDigits: 6, maximumFractionDigits: 8 });
+  };
+
   function calculatePercentageChange(
     oldPrice: number,
     newPrice: number
@@ -247,7 +262,7 @@ const Page = () => {
               </p>
             </div>
             <p className="text-3xl md:text-4xl font-bold text-white mb-1">
-              ${TimeStampPrice?.toLocaleString() || "--"}
+              ${formatPrice(TimeStampPrice)}
             </p>
             <p className="text-xs text-indigo-400/80">
               Price at selected timestamp
@@ -267,7 +282,7 @@ const Page = () => {
               </p>
             </div>
             <p className="text-3xl md:text-4xl font-bold text-white mb-1">
-              ${currentPrice?.toLocaleString() || "--"}
+              ${formatPrice(currentPrice)}
             </p>
             <p className="text-xs text-purple-400/80">
               {new Date().toLocaleString("en-US", {

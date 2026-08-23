@@ -3,7 +3,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import Nav from "@/components/Nav";
-import { toast } from "sonner";
+import { signIn } from "next-auth/react";
 import { FiTrendingUp, FiDatabase, FiCode, FiBarChart2 } from "react-icons/fi";
 
 const Page = () => {
@@ -42,7 +42,7 @@ const Page = () => {
             alt="Background"
             initial={{ opacity: 0, scale: 1.05 }}
             animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 1.5, ease: "easeOut" }}
+            transition={{ duration: 0.5, ease: "easeOut" }}
             className="absolute inset-0 w-full h-full object-cover"
           />
 
@@ -53,7 +53,7 @@ const Page = () => {
               <motion.h1
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.8, duration: 0.7 }}
+                transition={{ delay: 0.1, duration: 0.4 }}
                 className="text-4xl md:text-6xl font-bold mb-4 tracking-wider"
               >
                 Nexus Price
@@ -62,7 +62,7 @@ const Page = () => {
               <motion.p
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 1.1, duration: 0.7 }}
+                transition={{ delay: 0.2, duration: 0.4 }}
                 className="text-lg md:text-xl text-gray-200 mb-6"
               >
                 Get accurate historical token prices with powerful interpolation.
@@ -72,7 +72,7 @@ const Page = () => {
                 className="flex gap-4"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 1.4, duration: 0.6 }}
+                transition={{ delay: 0.3, duration: 0.4 }}
               >
                 <motion.a
                   href="/dashboard/playground"
@@ -83,18 +83,14 @@ const Page = () => {
                   Try for Free Now
                 </motion.a>
 
-                <motion.a
-                  onClick={(e) => {
-                    e.preventDefault();
-                    toast.error("Not so fast ,This feature is under development!");
-                  }}
+                <motion.button
+                  onClick={() => signIn(undefined, { callbackUrl: "/dashboard/playground" })}
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
-                  href="#"
                   className="bg-white text-indigo-600 hover:bg-gray-200 px-6 py-3 rounded-lg font-semibold shadow-lg transition-all cursor-pointer"
                 >
-                  Sign Up
-                </motion.a>
+                  Sign In
+                </motion.button>
               </motion.div>
             </div>
           </div>
@@ -105,7 +101,7 @@ const Page = () => {
           <motion.div 
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}
-            transition={{ duration: 0.8 }}
+            transition={{ duration: 0.4 }}
             viewport={{ once: true }}
             className="max-w-6xl mx-auto"
           >
@@ -137,7 +133,7 @@ const Page = () => {
             <motion.div
               initial={{ opacity: 0 }}
               whileInView={{ opacity: 1 }}
-              transition={{ duration: 0.8 }}
+              transition={{ duration: 0.4 }}
               viewport={{ once: true }}
               className="bg-gray-800/30 backdrop-blur-lg rounded-xl border border-gray-700 p-8"
             >
@@ -195,7 +191,7 @@ const Page = () => {
           <motion.div
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}
-            transition={{ duration: 0.8 }}
+            transition={{ duration: 0.4 }}
             viewport={{ once: true }}
             className="max-w-4xl mx-auto text-center"
           >
