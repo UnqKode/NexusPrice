@@ -34,7 +34,7 @@ interface SeedDoc {
   date: Date;
   price: number;
 }
-let seeded: SeedDoc[] = [];
+const seeded: SeedDoc[] = [];
 
 if (mongoAvailable) {
   // A deterministic pseudo-random walk, not a monotonic series - a flat or

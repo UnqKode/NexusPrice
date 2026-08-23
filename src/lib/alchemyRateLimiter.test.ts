@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { rateToIntervalMs, waitForRateLimitSlot } from "./alchemyRateLimiter";
 import type { RedisLike } from "./priceCache";
 
@@ -59,7 +59,7 @@ describe("waitForRateLimitSlot", () => {
     const arrivalOrder: number[] = [];
 
     await Promise.all(
-      [0, 1, 2, 3].map((i) =>
+      [0, 1, 2, 3].map(() =>
         waitForRateLimitSlot(redis as unknown as RedisLike, "hot-key", intervalMs).then(() => {
           arrivalOrder.push(Date.now());
         })

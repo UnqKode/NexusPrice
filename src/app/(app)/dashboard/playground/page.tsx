@@ -58,7 +58,6 @@ const Page = () => {
       if (data.success) {
         console.log("Price data fetched successfully:", data);
 
-        const currentPriceNum = data.Current?.price;
         const historyPriceNum = data.History?.price;
 
         

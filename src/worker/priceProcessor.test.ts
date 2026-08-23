@@ -281,7 +281,6 @@ describe("priceProcessor.processor", () => {
   it("treats a duplicate-key error (E11000) on the upsert as success, not a job failure", async () => {
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
-    const todayIso = today.toISOString();
     const yesterday = new Date(today.getTime() - 86_400_000);
 
     mockFetchSequence([
@@ -299,7 +298,6 @@ describe("priceProcessor.processor", () => {
   it("still fails the job on a non-duplicate-key Mongo error during the upsert", async () => {
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
-    const todayIso = today.toISOString();
     const yesterday = new Date(today.getTime() - 86_400_000);
 
     mockFetchSequence([
