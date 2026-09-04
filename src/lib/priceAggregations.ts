@@ -41,39 +41,36 @@ export async function getSeriesSummary(
   from: Date,
   to: Date
 ): Promise<SeriesSummary> {
-  const results = await Price.aggregate([
+  const results = await Price.aggregate([ //mongoDb Pipeline : to transform documetns inside database , on the server , rather than in node
     {
       $match: {
-        tokenAddress: tokenAddress.toLowerCase(),
-        network: network.toLowerCase(),
-        date: { $gte: from, $lte: to },
+        tokenAddress: tokenAddress.toLowerCase(), // only look at this token address
+        network: network.toLowerCase(), // only look for this network
+        date: { $gte: from, $lte: to }, // only retrieve data in this date range
       },
     },
-    { $sort: { date: 1 } },
+    { $sort: { date: 1 } }, // pull them in order oldest first
     {
-      $setWindowFields: {
+      $setWindowFields: { // can see its ownfield vs other document near by
         sortBy: { date: 1 },
         output: {
-          prevPrice: { $shift: { output: "$price", by: -1 } },
+          prevPrice: { $shift: { output: "$price", by: -1 } }, // for each document, look at the previous docuemnt adn copy its price into a new field called prevPrice
         },
       },
     },
     {
-      $addFields: {
-        // null (not 0/0) when there's no previous price, or the previous
-        // price was 0 - $stdDevSamp ignores non-numeric values, so this
-        // mirrors analytics.ts's `if (prev === 0) continue;` guard exactly.
+      $addFields: { // can only see its own field and does row by row computation
         periodReturn: {
           $cond: [
-            { $and: [{ $ne: ["$prevPrice", null] }, { $ne: ["$prevPrice", 0] } ] },
-            { $divide: [{ $subtract: ["$price", "$prevPrice"] }, "$prevPrice"] },
+            { $and: [{ $ne: ["$prevPrice", null] }, { $ne: ["$prevPrice", 0] } ] }, // ne : not equal , so a simple condition that prevprice not null and not zero
+            { $divide: [{ $subtract: ["$price", "$prevPrice"] }, "$prevPrice"] }, // then calc how much did the price change since yesterday , as a fraction
             null,
           ],
         },
       },
     },
     {
-      $group: {
+      $group: { // squash all docuemnt into one
         _id: null,
         min: { $min: "$price" },
         max: { $max: "$price" },
@@ -92,13 +89,12 @@ export async function getSeriesSummary(
 
   // $stdDevSamp returns null (not 0) when fewer than 2 samples are
   // available - analytics.ts's volatility() returns 0 in that case.
-  const volatility = row.volatility == null ? 0 : row.volatility * 100;
+  const volatility = row.volatility == null ? 0 : row.volatility * 100; // the sample standard deviation of preiod over period %
   const percentChange =
     row.count < 2 || row.first === 0 ? 0 : ((row.last - row.first) / row.first) * 100;
 
   return { percentChange, volatility, min: row.min, max: row.max };
 }
-
 /**
  * Equivalent to analytics.simpleMovingAverage(prices, window) for documents
  * already in Mongo. $setWindowFields with a bounded `documents` window is

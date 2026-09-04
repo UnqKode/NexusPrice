@@ -3,7 +3,7 @@
 // that needs it - authenticate, rate-limit by whoever that identity is,
 // optionally require admin scope - not because it's speculative
 // abstraction for a need that doesn't exist yet.
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server"; //typeSafety for typeScript
 import { authenticateRequestOrSession, isAdmin, type AuthenticatedIdentity } from "./apiAuth";
 import { checkRateLimit, rateLimitHeaders, type RateLimitRedis } from "./rateLimit";
 

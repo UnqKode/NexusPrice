@@ -2,10 +2,11 @@ import { createClient } from 'redis';
 import dotenv from 'dotenv';
 dotenv.config();
 declare global {
-
   var _redisClient: ReturnType<typeof createClient> | undefined;
 }
 
+//  a ?? b : it means that if left side exists -> use it , otherwise use right side
+// if there is a redis client already use that otherwise create a new one
 const client = globalThis._redisClient ?? createClient({
   username: 'default',
   password: process.env.REDIS_PASSWORD,
@@ -15,7 +16,7 @@ const client = globalThis._redisClient ?? createClient({
   },
 });
 
-if (!global._redisClient) {
+if (!global._redisClient) { // connecting the redis client
   client.on('error', (err) => console.error('Redis Client Error', err));
   (async () => {
     if (!client.isOpen) {

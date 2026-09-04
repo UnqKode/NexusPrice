@@ -1,13 +1,13 @@
 // /api/historical-prices/..
 
 
-import client from "@/lib/redisConnect";
-import { summarize, simpleMovingAverage } from "@/lib/analytics";
-import { getSeriesSummary } from "@/lib/priceAggregations";
-import { computeHistoricalRange } from "@/lib/dateRange";
-import dbConnect from "@/lib/dbConnect";
-import Price from "@/model/price.model";
-import { toAlchemyNetwork } from "@/lib/networks";
+import client from "@/lib/redisConnect"; // a redis connection is served , if it was already connected the previous connection is served
+import { summarize, simpleMovingAverage } from "@/lib/analytics"; // served summary and simpleMoving Average
+import { getSeriesSummary } from "@/lib/priceAggregations"; //returns percentage change, min , max , volitality
+import { computeHistoricalRange } from "@/lib/dateRange"; // return [starts, increment] 
+import dbConnect from "@/lib/dbConnect"; // mongoDb connection
+import Price from "@/model/price.model"; // [tokenAddress,network,date,price]
+import { toAlchemyNetwork } from "@/lib/networks"; // a simple map for network name for eg: ethereum: "eth-mainnet"
 import { guardRoute } from "@/lib/routeGuard";
 import { isValidTokenAddress } from "@/lib/validation";
 import { logger } from "@/lib/logger";
