@@ -79,6 +79,7 @@ function percentile(sorted, p) {
   return sorted[Math.max(0, idx)];
 }
 
+// a simple function to find the latency and errorKind
 async function fireRequest(url, coinId, startTime) {
   const start = performance.now();
   let httpOk = false;
@@ -120,7 +121,8 @@ async function runStage(url, concurrency, totalRequests, stageIndex) {
       results.push(await fireRequest(url, token, startTime));
     }
   }
-  await Promise.all(Array.from({ length: concurrency }, worker));
+  await Promise.all(Array.from({ length: concurrency }, worker)); // reason for concurrency
+  // create a array with x no of asynchronous function where x = concurrency 
   return results;
 }
 
