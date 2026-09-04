@@ -1,0 +1,176 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same ref makes an in-flight run obsolete - cancelling it
+# keeps queue time down without losing signal, since it's the newer commit
+# that actually needs verifying.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint & typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - run: npm ci
+
+      # `next lint` was removed in Next 16, so the "lint" script invokes the
+      # ESLint CLI directly against the flat config in eslint.config.mjs.
+      - name: ESLint
+        run: npm run lint
+
+      # Run separately from the build: `next build` only typechecks what the
+      # bundler actually reaches, which excludes the test files and the
+      # standalone worker entrypoint (src/worker/*), so a type error in either
+      # would otherwise ship green.
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+  test:
+    name: Tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      # One Node version failing shouldn't hide the result on the other.
+      fail-fast: false
+      matrix:
+        # Next 16 requires >=20.9.0 (next/package.json engines); 22.x is what
+        # the recorded benchmark run used (see BENCHMARKS.md). Both are
+        # exercised so neither the route handlers nor the worker quietly
+        # depend on a single runtime.
+        node: [20.x, 22.x]
+
+    services:
+      # src/lib/priceAggregations.test.ts asserts that the MongoDB aggregation
+      # pipelines and the pure-JS analytics in src/lib/analytics.ts produce
+      # genuinely identical numbers. It is deliberately not mocked - mocking
+      # Price.aggregate() would only prove the file is self-consistent, not
+      # that the pipeline semantics are right - so it needs a real server, and
+      # skips itself via describe.skipIf when none is reachable.
+      #
+      # MongoDB 6.0+ is required for $setWindowFields and $dateTrunc's
+      # binSize; the pipelines were originally verified against 8.0.29.
+      mongo:
+        image: mongo:8
+        ports:
+          - "27017:27017"
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      MONGODB_URI: mongodb://127.0.0.1:27017/nexusprice-ci
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      # The integration suite skips itself rather than failing when MongoDB is
+      # unreachable, which is the right behavior locally but means a
+      # misconfigured service container here would leave CI green while the
+      # equivalence assertions never executed at all. This asserts the exact
+      # precondition that describe.skipIf tests, so that misconfiguration
+      # fails loudly instead of silently reducing coverage.
+      - name: Verify MongoDB is reachable
+        run: |
+          node --input-type=module -e "
+            import mongoose from 'mongoose';
+            try {
+              await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 10000 });
+              console.log('MongoDB reachable - priceAggregations.test.ts will run, not skip.');
+              await mongoose.disconnect();
+            } catch (err) {
+              console.error('MongoDB unreachable:', err.message);
+              console.error('The aggregation-equivalence suite would silently skip. Failing instead.');
+              process.exit(1);
+            }
+          "
+
+      # Pins TZ=UTC (see vitest.config.ts) so date-sensitive logic behaves
+      # identically regardless of the runner's own timezone.
+      - name: Unit & integration tests
+        run: npm test
+
+      # A separate config pinning TZ=America/Los_Angeles - a negative-offset,
+      # DST-observing zone - to catch local-time date bugs that a UTC runner
+      # can never surface. It's excluded from `npm test` on purpose
+      # (vitest.config.ts), so without its own step here it would never run in
+      # CI at all.
+      - name: Timezone-adversarial suite
+        run: npm run test:tz-adversarial
+
+  build:
+    name: Production build
+    runs-on: ubuntu-latest
+
+    services:
+      # src/lib/redisConnect.ts connects as an import-time side effect, and
+      # `next build` evaluates the route modules that import it. The build
+      # still exits 0 without this (the connection failure is non-fatal), but
+      # it floods the log with ECONNREFUSED stack traces, which makes a real
+      # build error easy to miss.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - "6379:6379"
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - run: npm ci
+
+      # Next.js shares a build cache in .next/cache between builds; persisting
+      # it is what stops the "No Cache Detected" warning and keeps rebuilds
+      # fast. Key/restore-key shape is from Next's own CI guide
+      # (node_modules/next/dist/docs/01-app/02-guides/ci-build-caching.md).
+      - name: Restore Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-
+
+      # No app secrets are provided on purpose: the build must not require
+      # MONGODB_URI / ALCHEMY_API_KEY / NEXTAUTH_SECRET to succeed, since
+      # those are runtime concerns. If a future change makes the build depend
+      # on one, this job is where that regression surfaces.
+      - name: Build
+        run: npm run build

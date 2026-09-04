@@ -1,3 +1,6 @@
+// /api/historical-prices/..
+
+
 import client from "@/lib/redisConnect";
 import { summarize, simpleMovingAverage } from "@/lib/analytics";
 import { getSeriesSummary } from "@/lib/priceAggregations";

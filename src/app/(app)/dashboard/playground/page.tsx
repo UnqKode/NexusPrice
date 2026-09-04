@@ -1,8 +1,76 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useState, useSyncExternalStore } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
+
+interface HistoryEntry {
+  coinId: string;
+  network: string;
+  timestamp: string;
+}
+
+// localStorage is an external store, so it's read through useSyncExternalStore
+// rather than a useState + useEffect pair. Reading it in an effect and calling
+// setState synchronously renders once with an empty list and then immediately
+// re-renders with the real one - the cascading render that
+// react-hooks/set-state-in-effect flags. Subscribing to "storage" also keeps
+// two open tabs in agreement, which the effect version never did.
+const HISTORY_KEY = "fetchHistory";
+const HISTORY_LIMIT = 4;
+const EMPTY_HISTORY: HistoryEntry[] = [];
+
+const historyListeners = new Set<() => void>();
+// getSnapshot must return a referentially stable value between renders or
+// useSyncExternalStore re-renders forever, so the parsed array is memoized
+// against the raw string it came from rather than re-parsed on every call.
+let cachedRaw: string | null = null;
+let cachedHistory: HistoryEntry[] = EMPTY_HISTORY;
+
+function readHistory(): HistoryEntry[] {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(HISTORY_KEY);
+  } catch {
+    return EMPTY_HISTORY; // private mode / storage disabled
+  }
+  if (raw !== cachedRaw) {
+    cachedRaw = raw;
+    try {
+      const parsed = raw ? JSON.parse(raw) : null;
+      cachedHistory = Array.isArray(parsed) ? (parsed as HistoryEntry[]) : EMPTY_HISTORY;
+    } catch {
+      cachedHistory = EMPTY_HISTORY; // corrupt entry, treat as empty
+    }
+  }
+  return cachedHistory;
+}
+
+function subscribeToHistory(onStoreChange: () => void): () => void {
+  historyListeners.add(onStoreChange);
+  window.addEventListener("storage", onStoreChange);
+  return () => {
+    historyListeners.delete(onStoreChange);
+    window.removeEventListener("storage", onStoreChange);
+  };
+}
+
+// There is no localStorage during SSR - the server always renders an empty
+// list, and the real one arrives on the first client render.
+function getServerHistory(): HistoryEntry[] {
+  return EMPTY_HISTORY;
+}
+
+function writeHistory(entries: HistoryEntry[]): void {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(entries));
+  } catch {
+    // Quota exceeded or storage disabled - nothing to recover, and the
+    // lookup itself already succeeded, so this shouldn't surface an error.
+  }
+  cachedRaw = null; // force the next getSnapshot to re-read
+  historyListeners.forEach((notify) => notify());
+}
 
 const Page = () => {
   const [currentPrice, setCurrentPrice] = useState("0.00");
@@ -10,16 +78,11 @@ const Page = () => {
   const [tokenAddress, setTokenAddress] = useState("");
   const [network, setNetwork] = useState("");
   const [startTime, setStartTime] = useState("");
-  const [fetchHistory, setFetchHistory] = useState<
-    { coinId: string; network: string; timestamp: string }[]
-  >([]);
-
-  useEffect(() => {
-    const historyRaw = localStorage.getItem("fetchHistory");
-    if (historyRaw) {
-      setFetchHistory(JSON.parse(historyRaw));
-    }
-  }, []);
+  const fetchHistory = useSyncExternalStore(
+    subscribeToHistory,
+    readHistory,
+    getServerHistory
+  );
 
   const onFetchPriceData = async () => {
     if (!tokenAddress) {
@@ -102,9 +165,7 @@ const Page = () => {
       timestamp: startTime,
     };
     if (tokenAddress && network && startTime) {
-      const updatedHistory = [...fetchHistory, newEntry].slice(-4);
-      localStorage.setItem("fetchHistory", JSON.stringify(updatedHistory));
-      setFetchHistory(updatedHistory);
+      writeHistory([...fetchHistory, newEntry].slice(-HISTORY_LIMIT));
     }
   };
 

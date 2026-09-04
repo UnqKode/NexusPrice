@@ -597,9 +597,19 @@ function SidebarMenuSkeleton({
 }: React.ComponentProps<"div"> & {
   showIcon?: boolean
 }) {
+  // Derived from this instance's own useId() rather than Math.random().
+  // A random width computed during render differs between the server and
+  // client renders of the same skeleton, so it hydrates mismatched (and
+  // react-hooks/purity flags the impure call). Hashing the id keeps widths
+  // varied per instance while staying identical across both renders.
+  const id = React.useId()
   const width = React.useMemo(() => {
-    return `${Math.floor(Math.random() * 40) + 50}%`
-  }, [])
+    let hash = 0
+    for (let i = 0; i < id.length; i++) {
+      hash = (hash * 31 + id.charCodeAt(i)) | 0
+    }
+    return `${(Math.abs(hash) % 40) + 50}%`
+  }, [id])
 
   return (
     <div

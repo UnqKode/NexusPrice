@@ -15,6 +15,9 @@ interface CustomTooltipProps {
   active?: boolean;
   payload?: TooltipPayloadItem[];
   label?: string;
+  // Passed in explicitly rather than closed over: see the note on
+  // CustomTooltip's definition below for why it lives at module scope.
+  priceRange?: { min: number; max: number };
 }
 interface PriceItem {
   price: string;  // or number if the API returns numbers
@@ -27,6 +30,35 @@ interface ChartDataPoint {
   value: number;
   sma: number | null;
 }
+
+// Defined at module scope, not inside HistoricalPriceChart. A component
+// created during render is a brand-new component type on every render, so
+// React unmounts and remounts the whole tooltip subtree each time the parent
+// re-renders instead of updating it (this is what react-hooks/static-components
+// flags). `priceRange` therefore arrives as a prop - Recharts clones the
+// element passed to <Tooltip content={...}> and injects active/payload/label
+// alongside whatever props were already on it.
+const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label, priceRange }) => {
+  if (active && payload && payload.length) {
+    const span = priceRange ? priceRange.max - priceRange.min : 0;
+    return (
+      <div className="bg-gray-800 border border-gray-700 rounded-lg p-3 shadow-lg">
+        <p className="text-sm font-medium text-gray-300">{label}</p>
+        <p className="text-xl font-bold text-indigo-400">
+          ${Number(payload[0].value).toFixed(4)}
+        </p>
+        <p className="text-xs text-gray-400 mt-1">
+          {/* A single-point series has min === max, so guard the divide -
+              this previously rendered "NaN% of range" in that case. */}
+          {span > 0 && priceRange
+            ? `${(((payload[0].value - priceRange.min) / span) * 100).toFixed(2)}% of range`
+            : "—"}
+        </p>
+      </div>
+    );
+  }
+  return null;
+};
 
 interface AnalyticsSummary {
   percentChange: number;
@@ -103,24 +135,6 @@ const fetchHistoricalData = async () => {
       sma: item.sma ?? null,
     }));
     setChartData(formattedData);
-  };
-
-  const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label }) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-gray-800 border border-gray-700 rounded-lg p-3 shadow-lg">
-          <p className="text-sm font-medium text-gray-300">{label}</p>
-          <p className="text-xl font-bold text-indigo-400">
-           ${Number(payload[0].value).toFixed(4)}
-
-          </p>
-          <p className="text-xs text-gray-400 mt-1">
-            {((payload[0].value - priceRange.min) / (priceRange.max - priceRange.min) * 100).toFixed(2)}% of range
-          </p>
-        </div>
-      );
-    }
-    return null;
   };
 
   return (
@@ -276,7 +290,7 @@ const fetchHistoricalData = async () => {
                   width={80}
                 />
                 <Tooltip
-                  content={<CustomTooltip />}
+                  content={<CustomTooltip priceRange={priceRange} />}
                   cursor={{ fill: 'rgba(99, 102, 241, 0.1)' }}
                 />
                 <Bar
