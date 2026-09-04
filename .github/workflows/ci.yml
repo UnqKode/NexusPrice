@@ -174,3 +174,42 @@ jobs:
       # on one, this job is where that regression surfaces.
       - name: Build
         run: npm run build
+
+  docker:
+    name: Docker images build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Buildx enables layer caching via the GitHub Actions cache so repeat
+      # runs don't reinstall node_modules from scratch every time.
+      - uses: docker/setup-buildx-action@v3
+
+      # Both images are built - never pushed (no registry, no login). The point
+      # is only that a broken Dockerfile / Dockerfile.worker fails the PR
+      # instead of being discovered at deploy time. Neither build needs runtime
+      # secrets: the app image's `next build` has the same no-secrets contract
+      # as the build job above, and the worker image just installs deps + copies
+      # the TS sources (tsx runs them at container start, not at build time).
+      - name: Build app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          load: true
+          tags: nexusprice-app:ci
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,scope=app,mode=max
+
+      - name: Build worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.worker
+          push: false
+          load: true
+          tags: nexusprice-worker:ci
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,scope=worker,mode=max

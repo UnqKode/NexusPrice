@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+
+# ---------------------------------------------------------------------------
+# NexusPrice — BullMQ worker image (the long-lived queue consumer).
+#
+# This process is `tsx src/worker/priceWorker.ts` — it is executed *as
+# TypeScript*, never compiled to JS. So, unlike the app image, it cannot use
+# Next's standalone output; it needs the .ts sources, tsconfig.json (for the
+# "@/*" path alias), and tsx at runtime.
+#
+# `tsx` was moved from devDependencies to dependencies in package.json for
+# exactly this reason: it is a genuine *runtime* dependency of this project,
+# not a dev-only tool. That lets `npm ci --omit=dev` here produce a working,
+# lean worker image (bullmq/mongoose/redis/axios/dotenv/tsx) without dragging
+# in the full app toolchain (eslint, vitest, tailwind, next, react, ...).
+# ---------------------------------------------------------------------------
+FROM node:22-alpine AS base
+RUN apk add --no-cache libc6-compat
+
+# --- deps: production dependencies only ---
+FROM base AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+# --- runner ---
+FROM base AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+RUN addgroup --system --gid 1001 nodejs \
+  && adduser --system --uid 1001 worker
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY --chown=worker:nodejs package.json tsconfig.json ./
+COPY --chown=worker:nodejs src ./src
+
+USER worker
+# `npm run worker` == `tsx src/worker/priceWorker.ts`. The worker registers a
+# SIGTERM handler that calls worker.close() for a graceful drain, so run it as
+# PID-adjacent under tini-less alpine is fine; `docker stop` sends SIGTERM.
+CMD ["npm", "run", "worker"]

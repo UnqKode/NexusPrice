@@ -13,7 +13,7 @@ missing.
 
 | Layer | Tech | Notes |
 |---|---|---|
-| App | Next.js 15 (App Router) | API routes under `src/app/api/`, no separate Express server |
+| App | Next.js 16 (App Router) | API routes under `src/app/api/`, no separate Express server |
 | Cache | Redis | Single-flight + stale-while-revalidate, see `src/lib/priceCache.ts` |
 | Database | MongoDB (Mongoose) | Daily price history, one document per (token, network, day) |
 | Queue | BullMQ | Backfill jobs, run by a standalone worker process |
@@ -84,7 +84,7 @@ Redis is not a hard dependency: if it's unreachable (timeout or error),
 
 ```
 src/
-  middleware.ts             # next-auth route protection for /dashboard/*
+  proxy.ts                  # next-auth route protection for /dashboard/* (renamed from middleware.ts in Next 16)
   app/
     (app)/dashboard/       # UI: playground (lookup) and stats (charts) pages
     (auth)/signup/          # redirects to /api/auth/signin - no self-service registration
@@ -122,7 +122,6 @@ scripts/
     mainnet-top20.json         # ~20 real, verified mainnet ERC-20 addresses benchmark.mjs uses by default
   load-test.mjs               # staged concurrency ramp to find the breaking point (synthetic addresses)
   load-test-real-tokens.mjs    # same ramp methodology, against real tokens instead of synthetic ones
-  migrate-price-schema.mjs     # one-time migration for the price.model.ts schema change
 ```
 
 ## Setup
@@ -137,6 +136,54 @@ scripts/
 5. `npm test` - runs the test suite (Vitest). `npm run test:tz-adversarial`
    runs a separate suite that deliberately runs under a non-UTC,
    DST-observing timezone - see "Known limitations".
+
+## Docker
+
+The whole stack - the Next.js app, the worker, Redis, and MongoDB - is
+described in `docker-compose.yml`. This is the fastest way to get a running
+instance without installing Redis and Mongo locally.
+
+**Just the datastores** (recommended for day-to-day work - run the app/worker
+on the host with `npm run dev` / `npm run worker`, exactly the "Local-first
+development" setup below, but with zero manual Redis/Mongo installation):
+
+```bash
+docker compose up -d redis mongo
+```
+
+Named volumes (`redis-data`, `mongo-data`) persist data across restarts, and
+both services have healthchecks (`redis-cli ping` / `mongosh ... ping`). Ports
+match `.env.example` defaults: Redis on 6379, Mongo on 27017.
+
+**The full stack** (app + worker + datastores):
+
+```bash
+cp .env.example .env    # fill in ALCHEMY_API_KEY, API_KEYS, NEXTAUTH_SECRET, etc.
+docker compose up --build
+```
+
+The app is then reachable on http://localhost:3000. A few things worth knowing:
+
+- **Two images, on purpose** (see "Architecture"). `Dockerfile` builds the app
+  (Next's `output: "standalone"`, run as a non-root user, static assets copied
+  in explicitly since standalone omits them). `Dockerfile.worker` builds the
+  worker, which runs its TypeScript sources directly via `tsx` - so `tsx` is a
+  *runtime* dependency here, not a dev tool.
+- **Secrets are never baked into an image.** Both `app` and `worker` read
+  config from `.env` at runtime (`env_file`), and compose overrides
+  `REDIS_HOST=redis` / `MONGODB_URI=mongodb://mongo:27017/nexusprice` so the
+  containers reach the datastores by service name rather than `localhost`.
+- **Startup ordering is health-gated.** `app` and `worker` wait for Redis and
+  Mongo to report healthy before starting, because `redisConnect.ts` opens its
+  connection as an import-time side effect - starting before Redis is ready
+  would just produce ECONNREFUSED noise.
+- The `worker` throws on startup if `ALCHEMY_API_KEY` is unset. `ALCHEMY_RPS`
+  is deliberately left unset so the code default (the exact fraction
+  `300/3600` req/s) applies - see "Running the worker".
+
+To exercise the worker end-to-end: `POST /api/schedule` with an admin
+`x-api-key` and `{ "coinId": "<0x-address>", "network": "ethereum" }`, then
+poll `GET /api/schedule/status?coinId=...&network=ethereum`.
 
 ## Running the worker
 
@@ -209,8 +256,9 @@ identity turned out to be.
   credential pair (`DASHBOARD_USERNAME`/`DASHBOARD_PASSWORD`) - there's
   no self-service registration (`/signup` just redirects to
   `/api/auth/signin`), and any valid session is treated as `admin` scope
-  since there's exactly one account. `src/middleware.ts` gates
-  `/dashboard/*` on having a session, redirecting to sign-in otherwise.
+  since there's exactly one account. `src/proxy.ts` (renamed from
+  `middleware.ts` in Next 16) gates `/dashboard/*` on having a session,
+  redirecting to sign-in otherwise.
   next-auth was kept (not removed as an unused dependency) specifically
   because the dashboard needed *some* way to call its own now-locked-down
   API routes, and a session cookie is the correct mechanism for a

@@ -1,0 +1,92 @@
+# NexusPrice full stack: app + worker + redis + mongo.
+#
+#   docker compose up --build          # whole stack; app on http://localhost:3000
+#   docker compose up -d redis mongo   # JUST local infra, for `npm run dev` on
+#                                       # the host (see README "Local-first
+#                                       # development" — this is the fix for a
+#                                       # reclaimed cloud Redis silently breaking
+#                                       # every cache path).
+#
+# The two processes are separate images on purpose (see README "Architecture"):
+# the app serves requests, the worker is a long-lived BullMQ consumer.
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:8
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    # Secrets come from .env at runtime, never baked into the image.
+    # required: false so `docker compose up redis mongo` (infra only) still
+    # works before a reviewer has created .env.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Override whatever .env says: inside the compose network the app reaches
+      # the datastores by service name, not localhost.
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MONGODB_URI: mongodb://mongo:27017/nexusprice
+    depends_on:
+      # redisConnect.ts opens its connection as an import-time side effect (a
+      # floating IIFE nothing awaits), so waiting for redis to be healthy first
+      # avoids ECONNREFUSED noise at startup.
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MONGODB_URI: mongodb://mongo:27017/nexusprice
+      # ALCHEMY_RPS is deliberately NOT set here so the code default (the exact
+      # fraction 300/3600 req/s — Alchemy's free-tier ceiling) applies.
+      # WORKER_CONCURRENCY and ALCHEMY_API_KEY come from .env; the worker
+      # throws on startup if ALCHEMY_API_KEY is missing.
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  mongo-data:

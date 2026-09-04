@@ -1,0 +1,40 @@
+# Keep build context small and never leak secrets or host-built artifacts
+# into an image. node_modules is reinstalled inside the image from
+# package-lock.json so the platform (linux/alpine) native builds are correct;
+# copying the host's would ship win32/glibc binaries into an alpine image.
+node_modules
+npm-debug.log*
+.pnpm-debug.log*
+
+# Next.js build output - rebuilt inside the image; a stale host .next would
+# otherwise be copied over the freshly built one.
+.next
+out
+build
+
+# Secrets. .env* is excluded so credentials are never baked into a layer;
+# runtime config is injected via compose `env_file`/`environment` instead.
+# .env.example is documentation, not a secret, so it's allowed through.
+.env
+.env.*
+!.env.example
+
+# VCS and CI
+.git
+.gitignore
+.github
+
+# Benchmark/load-test artifacts and their outputs
+BENCHMARKS.md
+
+# Editor / OS cruft
+.vscode
+.idea
+.DS_Store
+*.tsbuildinfo
+
+# Docker's own files - no reason to send them into the build context
+Dockerfile*
+.dockerignore
+docker-compose*.yml
+README.md
