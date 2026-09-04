@@ -1,30 +1,15 @@
 #!/usr/bin/env node
 // Latency/availability benchmark harness for POST /api/price.
-//
-// Run this against a *real, running* instance of the app (e.g. `npm run dev`
-// in one terminal, this script in another) - it cannot be run standalone,
-// and it deliberately does not mock anything: the numbers it prints are only
-// as honest as the environment you point it at.
-//
+// Run this against a *real, running* instance of the app 
 // Usage:
 //   node scripts/benchmark.mjs --confirm-quota-spend
 //   node scripts/benchmark.mjs --confirm-quota-spend --bypass-cache
 //   node scripts/benchmark.mjs --synthetic --tokens 50 --confirm-quota-spend
 //   node scripts/benchmark.mjs --tokens-file ./my-tokens.json --confirm-quota-spend
 //
-// Auth: since Task 7 locked these routes down, every request needs a valid
-// x-api-key. Read from the API_KEY env var by default (chosen over a
-// required --api-key flag so the key never lands in shell history or a
-// `ps`/process-list snapshot - the same reasoning the rest of this codebase
-// applies to ALCHEMY_API_KEY/MONGODB_URI). --api-key is still accepted as an
-// explicit override for one-off runs where that tradeoff is acceptable.
-//
 // What it measures:
 //   - "cold" requests: the first request for a given (token, network, startTime)
-//     tuple - guaranteed cache miss, so this is your uncached-path latency
-//     (but still pays Redis GET/lock-acquire overhead on the way to the miss).
-//   - "warm" requests: every subsequent request for the same tuple - these hit
-//     the single-flight cache and should land in the "fresh" or "stale" path.
+//   - "warm" requests: every subsequent request for the same tuple 
 //   - "bypass" requests (only with --bypass-cache, and only if the server has
 //     ALLOW_CACHE_BYPASS=true set): skip the cache layer entirely via the
 //     x-bypass-cache header, calling Alchemy directly on every request, not
@@ -35,21 +20,43 @@
 //     (HTTP 200, not `degraded`, no thrown/network error) - not just HTTP 200,
 //     since this API returns 200 even when it has nothing useful to say.
 //
-// Quota discipline: cold and bypass requests spend real Alchemy token_price
-// quota (300/hour free tier, shared with the worker's own backfill traffic).
-// This script computes and prints the full request/quota plan up front and
-// refuses to run the quota-spending phases (cold, bypass) without an
-// explicit --confirm-quota-spend flag - see printPlan() below. Warm requests
-// don't call Alchemy at all (cache hit), but they DO count against the
-// server's per-key rate limit (60/60s on this route, regardless of cache
-// hit/miss), so this script self-throttles every phase - cold, warm, and
-// bypass alike - to stay under that limit. See RateGovernor.
-//
-// A single run of this script measures availability over ITS OWN window
-// (the duration of the run against the traffic it generated). That is not
-// the same claim as "99.9% availability" in production, which requires
-// continuous instrumentation over real traffic - see the accompanying
-// writeup for why these are different claims.
+
+
+// Architecture Diagram for this file
+//Command line
+//      ↓
+// parseArgs()
+//      ↓
+// Configuration
+//      ↓
+// Load/generate tokens
+//      ↓
+// printPlan()
+//      ↓
+// RateGovernor
+//      ↓
+// Create tasks
+//      ↓
+// ┌──────────────┬──────────────┬──────────────┐
+// │     COLD     │     WARM     │    BYPASS    │
+// │ cache miss   │ cache hit    │ no cache     │
+// └──────────────┴──────────────┴──────────────┘
+//      ↓
+// runPool()
+//      ↓
+// fireRequest()
+//      ↓
+// Collect latency/results
+//      ↓
+// summarize()
+//      ↓
+// P50 / P95 / P99 / availability
+// | Percentile | Meaning                        |
+// | ---------- | ------------------------------ |
+// |   P50      | 50% of requests ≤ this latency |
+// |   P95      | 95% of requests ≤ this latency |
+// |   P99      | 99% of requests ≤ this latency |
+
 
 import { performance } from "node:perf_hooks";
 import { readFileSync } from "node:fs";
@@ -58,19 +65,7 @@ import path from "node:path";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TOKENS_FILE = path.join(__dirname, "tokens", "mainnet-top20.json");
-
-// Mirrors the route's own validation (src/lib/validation.ts) - duplicated
-// rather than imported because this is a plain .mjs script and that file is
-// TypeScript; kept in sync by inspection, not by a build step.
 const TOKEN_ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
-
-// Must match (or stay under) src/app/api/price/route.ts's RATE_LIMIT.limit
-// (60 per 60s at the time of writing). Set below that, not at it, so clock
-// skew between this process and the server, or a slightly-early window
-// rollover, doesn't tip a request over the server's real ceiling and turn
-// into a 429 that corrupts the latency samples (a 429 is fast and would
-// otherwise silently pull percentiles down while also being reported as
-// unusable - misleading in both directions at once).
 const DEFAULT_RATE_LIMIT_PER_MINUTE = 55;
 
 // Worst/best case Alchemy calls per cold or bypass /api/price request - see
@@ -81,12 +76,13 @@ const BEST_CASE_CALLS_PER_REQUEST = 2;
 const WORST_CASE_CALLS_PER_REQUEST = 4;
 const ALCHEMY_HOURLY_QUOTA = 300;
 
+// a custom argument parser for command line inputs
 function parseArgs(argv) {
   const args = {
     url: "http://localhost:3000",
-    tokensFile: DEFAULT_TOKENS_FILE,
-    synthetic: false,
-    tokens: undefined, // undefined = use every token in the file; required (with a default) for --synthetic
+    tokensFile: DEFAULT_TOKENS_FILE, // file in public folder and token subfolder
+    synthetic: false, 
+    tokens: undefined, // undefined = use every token in the file; required for --synthetic
     requestsPerToken: 10,
     concurrency: 10,
     apiKey: process.env.API_KEY,
@@ -112,7 +108,7 @@ function parseArgs(argv) {
     const key = arg?.replace(/^--/, "");
     const value = argv[i + 1];
     if (key && value !== undefined) {
-      args[key.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value;
+      args[key.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value; // the replace function converts --requests-per-token to requestsPerToken
       i++;
     }
   }
@@ -124,16 +120,18 @@ function parseArgs(argv) {
 }
 
 function loadRealTokens(filePath, limit) {
-  const raw = readFileSync(filePath, "utf-8");
-  const parsed = JSON.parse(raw);
-  if (!Array.isArray(parsed) || parsed.length === 0) {
+  //functiont to read file from scripts/tokens/mainnet-top20.json
+  //read LIMIT token and return them to main functions
+  const raw = readFileSync(filePath, "utf-8"); // converts the file into string because of utf-8
+  const parsed = JSON.parse(raw); // converts it back to json array
+  if (!Array.isArray(parsed) || parsed.length === 0) { // check wether file is in array format or not
     throw new Error(`${filePath} must contain a non-empty JSON array of { address, network } objects`);
   }
-  const tokens = parsed.map((entry, i) => {
+  const tokens = parsed.map((entry, i) => { // a validation function for all tokens in file
     if (!entry || typeof entry.address !== "string" || typeof entry.network !== "string") {
       throw new Error(`${filePath}[${i}] must have string "address" and "network" fields, got: ${JSON.stringify(entry)}`);
     }
-    if (!TOKEN_ADDRESS_PATTERN.test(entry.address)) {
+    if (!TOKEN_ADDRESS_PATTERN.test(entry.address)) {//check valid address pattern that is 0x and then 40 chars
       throw new Error(`${filePath}[${i}].address "${entry.address}" is not a valid 0x + 40 hex char address`);
     }
     return { address: entry.address, network: entry.network, symbol: entry.symbol };
@@ -142,15 +140,122 @@ function loadRealTokens(filePath, limit) {
 }
 
 function generateSyntheticTokens(count, network) {
-  // Synthetic but distinct addresses so each gets its own cache key - the
-  // right tool for load testing (unique keys are the point), the wrong tool
-  // for realistic latency numbers (Alchemy has no data for these, so every
-  // request short-circuits to degraded:true almost immediately instead of
-  // exercising the real upstream call path).
+  // Synthetic but distinct addresses so each gets its own cache key 
   return Array.from({ length: count }, (_, i) => ({
     address: "0x" + i.toString(16).padStart(40, "0"),
     network,
   }));
+}
+
+//a basic function to print the whole plan about what we're about to do, before benchmarking it 
+function printPlan(args, tokens) {
+  const coldCount = tokens.length;
+  const warmCount = tokens.length * (args.requestsPerToken - 1); // the number of requests that happen after the first request for each token, where the result is expected to already be in the cache.
+  const bypassCount = args.bypassCache ? tokens.length : 0;
+  const quotaSpendingRequests = coldCount + bypassCount;
+
+  const bestCase = quotaSpendingRequests * BEST_CASE_CALLS_PER_REQUEST;
+  const worstCase = quotaSpendingRequests * WORST_CASE_CALLS_PER_REQUEST;
+
+  console.log("=== Benchmark plan ===");
+  console.log(`  tokens:            ${tokens.length} (${args.synthetic ? "synthetic" : args.tokensFile})`);
+  console.log(`  cold requests:     ${coldCount} (1 per token - quota-spending)`);
+  console.log(`  warm requests:     ${warmCount} (cache hit - free, 0 Alchemy calls)`);
+  console.log(`  bypass requests:   ${bypassCount}${args.bypassCache ? " (1 per token - quota-spending, every request)" : " (--bypass-cache not set)"}`);
+  console.log(`  total requests:    ${coldCount + warmCount + bypassCount}`);
+  console.log("");
+  console.log(`  upstream Alchemy calls = quota-spending requests (${quotaSpendingRequests}) x calls-per-request:`);
+  console.log(`    best case  (exact historical match hits): ${quotaSpendingRequests} x ${BEST_CASE_CALLS_PER_REQUEST} = ${bestCase} calls`);
+  console.log(`    worst case (falls back to interpolation): ${quotaSpendingRequests} x ${WORST_CASE_CALLS_PER_REQUEST} = ${worstCase} calls`);
+  console.log(`  Alchemy free-tier ceiling: ${ALCHEMY_HOURLY_QUOTA}/hour (shared with any running worker backfill)`);
+  console.log(
+    `  worst-case usage: ${worstCase}/${ALCHEMY_HOURLY_QUOTA} = ${((worstCase / ALCHEMY_HOURLY_QUOTA) * 100).toFixed(1)}% ` +
+      `(${ALCHEMY_HOURLY_QUOTA - worstCase} calls of headroom remaining for the worker's pacer and anything else)`
+  );
+  console.log(
+    `  self-throttled to ${args.rateLimitPerMinute} requests/60s to stay under the server's own per-key rate limit ` +
+      `(this bounds wall-clock time, not quota - see RateGovernor)`
+  );
+  console.log("=======================\n");
+
+  return { coldCount, warmCount, bypassCount, quotaSpendingRequests, worstCase };
+}
+
+//A rate Limiter, make sure program doesnt perform more than maxPerMinute operation in a given minute
+class RateGovernor {
+  constructor(maxPerMinute) {
+    this.maxPerMinute = maxPerMinute;
+    this.windowBucket = null;
+    this.countInWindow = 0;
+  }
+
+  async acquire() {
+    for (;;) {
+      const bucket = Math.floor(Date.now() / 1000 / 60);
+      // each minute is a different bucket
+      if (bucket !== this.windowBucket) {
+        this.windowBucket = bucket;
+        this.countInWindow = 0;
+      }
+      if (this.countInWindow < this.maxPerMinute) {
+        this.countInWindow++;
+        return;
+      }
+      const msUntilNextWindow = (bucket + 1) * 60 * 1000 - Date.now() + 50;
+      //how many milisecons untill the next minute begins
+      //50 added because it adds a small buffer , so no timing precision error occurs
+      await new Promise((resolve) => setTimeout(resolve, Math.max(50, msUntilNextWindow)));
+      //sleep untill next window
+    }
+  }
+}
+
+//A simple function to fire api call and measure latency, errorKin etc
+async function fireRequest(url, apiKey, coinId, network, startTime, { bypass } = {}) {
+  const start = performance.now();
+  let httpOk = false;
+  let usable = false;
+  let errorKind = null;
+  let cacheSource = { current: undefined, history: undefined };
+  try {
+    const headers = { "Content-Type": "application/json", "x-api-key": apiKey };
+    if (bypass) headers["x-bypass-cache"] = "1";
+    const res = await fetch(`${url}/api/price`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ coinId, network, startTime }),
+      signal: AbortSignal.timeout(15000), // dont let this request run longer than 15 sec
+    });
+    httpOk = res.status === 200;
+    if (httpOk) {
+      const data = await res.json();
+      usable =
+        data.success === true &&
+        data.degraded !== true &&
+        (data.History?.price !== null && data.History?.price !== undefined);
+      if (!usable) errorKind = "degraded-200";
+      cacheSource = { current: data.Current?.cache, history: data.History?.cache };
+    } else {
+      errorKind = `http-${res.status}`;
+    }
+  } catch (err) {
+    errorKind = err?.name === "TimeoutError" ? "timeout" : "network-error";
+  }
+  const latencyMs = performance.now() - start;
+  return { latencyMs, httpOk, usable, errorKind, cacheSource };
+}
+
+async function runPool(tasks, concurrency) {
+  const results = [];
+  let cursor = 0;
+  async function worker() {
+    while (cursor < tasks.length) {
+      const i = cursor++;
+      results[i] = await tasks[i]();
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, worker));
+  return results;
 }
 
 function percentile(sortedLatencies, p) {
@@ -186,117 +291,23 @@ function summarize(label, samples) {
   }
 }
 
-// Self-throttles to the server's own per-key fixed-window rate limit
-// (src/lib/rateLimit.ts) so this script's own traffic never trips a 429
-// against itself - a 429 would be fast (no upstream call) and would
-// corrupt both the latency percentiles and the usable-response rate with a
-// failure mode that has nothing to do with what's actually being measured.
-class RateGovernor {
-  constructor(maxPerMinute) {
-    this.maxPerMinute = maxPerMinute;
-    this.windowBucket = null;
-    this.countInWindow = 0;
-  }
-  async acquire() {
-    for (;;) {
-      const bucket = Math.floor(Date.now() / 1000 / 60);
-      if (bucket !== this.windowBucket) {
-        this.windowBucket = bucket;
-        this.countInWindow = 0;
-      }
-      if (this.countInWindow < this.maxPerMinute) {
-        this.countInWindow++;
-        return;
-      }
-      const msUntilNextWindow = (bucket + 1) * 60 * 1000 - Date.now() + 50;
-      await new Promise((resolve) => setTimeout(resolve, Math.max(50, msUntilNextWindow)));
-    }
-  }
-}
-
-async function fireRequest(url, apiKey, coinId, network, startTime, { bypass } = {}) {
-  const start = performance.now();
-  let httpOk = false;
-  let usable = false;
-  let errorKind = null;
-  let cacheSource = { current: undefined, history: undefined };
-  try {
-    const headers = { "Content-Type": "application/json", "x-api-key": apiKey };
-    if (bypass) headers["x-bypass-cache"] = "1";
-    const res = await fetch(`${url}/api/price`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ coinId, network, startTime }),
-      signal: AbortSignal.timeout(15000),
-    });
-    httpOk = res.status === 200;
-    if (httpOk) {
-      const data = await res.json();
-      usable =
-        data.success === true &&
-        data.degraded !== true &&
-        (data.History?.price !== null && data.History?.price !== undefined);
-      if (!usable) errorKind = "degraded-200";
-      cacheSource = { current: data.Current?.cache, history: data.History?.cache };
-    } else {
-      errorKind = `http-${res.status}`;
-    }
-  } catch (err) {
-    errorKind = err?.name === "TimeoutError" ? "timeout" : "network-error";
-  }
-  const latencyMs = performance.now() - start;
-  return { latencyMs, httpOk, usable, errorKind, cacheSource };
-}
-
-async function runPool(tasks, concurrency) {
-  const results = [];
-  let cursor = 0;
-  async function worker() {
-    while (cursor < tasks.length) {
-      const i = cursor++;
-      results[i] = await tasks[i]();
-    }
-  }
-  await Promise.all(Array.from({ length: concurrency }, worker));
-  return results;
-}
-
-function printPlan(args, tokens) {
-  const coldCount = tokens.length;
-  const warmCount = tokens.length * (args.requestsPerToken - 1);
-  const bypassCount = args.bypassCache ? tokens.length : 0;
-  const quotaSpendingRequests = coldCount + bypassCount;
-
-  const bestCase = quotaSpendingRequests * BEST_CASE_CALLS_PER_REQUEST;
-  const worstCase = quotaSpendingRequests * WORST_CASE_CALLS_PER_REQUEST;
-
-  console.log("=== Benchmark plan ===");
-  console.log(`  tokens:            ${tokens.length} (${args.synthetic ? "synthetic" : args.tokensFile})`);
-  console.log(`  cold requests:     ${coldCount} (1 per token - quota-spending)`);
-  console.log(`  warm requests:     ${warmCount} (cache hit - free, 0 Alchemy calls)`);
-  console.log(`  bypass requests:   ${bypassCount}${args.bypassCache ? " (1 per token - quota-spending, every request)" : " (--bypass-cache not set)"}`);
-  console.log(`  total requests:    ${coldCount + warmCount + bypassCount}`);
-  console.log("");
-  console.log(`  upstream Alchemy calls = quota-spending requests (${quotaSpendingRequests}) x calls-per-request:`);
-  console.log(`    best case  (exact historical match hits): ${quotaSpendingRequests} x ${BEST_CASE_CALLS_PER_REQUEST} = ${bestCase} calls`);
-  console.log(`    worst case (falls back to interpolation): ${quotaSpendingRequests} x ${WORST_CASE_CALLS_PER_REQUEST} = ${worstCase} calls`);
-  console.log(`  Alchemy free-tier ceiling: ${ALCHEMY_HOURLY_QUOTA}/hour (shared with any running worker backfill)`);
-  console.log(
-    `  worst-case usage: ${worstCase}/${ALCHEMY_HOURLY_QUOTA} = ${((worstCase / ALCHEMY_HOURLY_QUOTA) * 100).toFixed(1)}% ` +
-      `(${ALCHEMY_HOURLY_QUOTA - worstCase} calls of headroom remaining for the worker's pacer and anything else)`
-  );
-  console.log(
-    `  self-throttled to ${args.rateLimitPerMinute} requests/60s to stay under the server's own per-key rate limit ` +
-      `(this bounds wall-clock time, not quota - see RateGovernor)`
-  );
-  console.log("=======================\n");
-
-  return { coldCount, warmCount, bypassCount, quotaSpendingRequests, worstCase };
-}
-
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
-
+  const args = parseArgs(process.argv.slice(2)); //because the general script starts like node scripts/benchmark.mjs --synthetic --tokens 50 --confirm-quota-spend so we slice to start after benchmark.mjs
+  //parseArgs is a function created above
+  // it returns something like this 
+  //  const args = {
+  //   url: "http://localhost:3000",
+  //   tokensFile: DEFAULT_TOKENS_FILE, 
+  //   synthetic: false, 
+  //   tokens: undefined, 
+  //   requestsPerToken: 10,
+  //   concurrency: 10,
+  //   apiKey: process.env.API_KEY,
+  //   bypassCache: false,
+  //   confirmQuotaSpend: false,
+  //   rateLimitPerMinute: DEFAULT_RATE_LIMIT_PER_MINUTE,
+  //   network: "ethereum", 
+  // };
   if (!args.apiKey) {
     console.error(
       "No API key provided. Set the API_KEY env var (recommended) or pass --api-key <key>. " +
@@ -305,9 +316,9 @@ async function main() {
     process.exit(1);
   }
 
-  const tokens = args.synthetic
-    ? generateSyntheticTokens(args.tokens ?? 20, args.network)
-    : loadRealTokens(args.tokensFile, args.tokens);
+  const tokens = args.synthetic ? generateSyntheticTokens(args.tokens ?? 20, args.network) : loadRealTokens(args.tokensFile, args.tokens);
+  //token looks like this
+  // [{ address: "....", network: "....", symbol: "...." }]
 
   console.log(`Benchmarking ${args.url}/api/price`);
   console.log(`requestsPerToken=${args.requestsPerToken} concurrency=${args.concurrency} bypassCache=${args.bypassCache}\n`);
@@ -322,7 +333,9 @@ async function main() {
     return;
   }
 
-  const governor = new RateGovernor(args.rateLimitPerMinute);
+  const governor = new RateGovernor(args.rateLimitPerMinute); // creating an object of class RateGorvernor
+
+  //paced() is a function that takes another function as a inpute and return a new function.
   const paced = (task) => async () => {
     await governor.acquire();
     return task();
@@ -334,19 +347,17 @@ async function main() {
 
   for (const token of tokens) {
     const startTime = Math.floor(Date.now() / 1000).toString();
-    coldTasks.push(paced(() => fireRequest(args.url, args.apiKey, token.address, token.network, startTime)));
+    coldTasks.push(paced(() => fireRequest(args.url, args.apiKey, token.address, token.network, startTime))); // pushed fucntion in array coldTasks
     for (let r = 1; r < args.requestsPerToken; r++) {
-      warmTasks.push(paced(() => fireRequest(args.url, args.apiKey, token.address, token.network, startTime)));
+      warmTasks.push(paced(() => fireRequest(args.url, args.apiKey, token.address, token.network, startTime)));  // pushed fucntion in array warmTasks
     }
     if (args.bypassCache) {
-      // Distinct startTime from the cold/warm tuple above so a bypass
-      // request can never be served by a cache entry the cold request just
-      // wrote - it's measuring "no cache in the picture", not "cache miss
+      // it's measuring "no cache in the picture", not "cache miss
       // because of a fresh key that happens to also be untouched by bypass".
       const bypassStartTime = (Math.floor(Date.now() / 1000) - 3600).toString();
       bypassTasks.push(
         paced(() => fireRequest(args.url, args.apiKey, token.address, token.network, bypassStartTime, { bypass: true }))
-      );
+      );  // pushed fucntion in array bypassStartTime
     }
   }
 

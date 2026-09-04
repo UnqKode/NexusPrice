@@ -4,6 +4,38 @@
 // "no data" back from Alchemy regardless of load, which would measure "how
 // fast can we return degraded:true for garbage input" rather than the thing
 // we actually want: where does the system break under realistic traffic.
+
+//This file answers the question
+// How much concurrent traffic can /api/price handle before its latency or reliability becomes unacceptable?
+
+//The entire script basically does this 
+// Start
+//   ↓
+// Read command-line arguments
+//   ↓
+// Use 20 real Ethereum token addresses
+//   ↓
+// Test concurrency = 5
+//   ↓
+// Measure P50 / P95 / P99 / usable %
+//   ↓
+// Test concurrency = 15
+//   ↓
+// Measure again
+//   ↓
+// Test concurrency = 30
+//   ↓
+// Measure again
+//   ↓
+// Test concurrency = 60
+//   ↓
+// ...
+//   ↓
+// STOP if:
+//   usable responses < 90%
+//        OR
+//   P95 becomes > 5× baseline
+
 import { performance } from "node:perf_hooks";
 
 const REAL_TOKENS = [
@@ -111,6 +143,8 @@ function report(concurrency, results) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  //args is somethign like this
+  //{ url: "http://localhost:3000", stages: [5,15,30,60,100], requestsPerStage: 40 , "" : ""}
   console.log(`Load-ramping ${args.url}/api/price with ${REAL_TOKENS.length} real tokens, stages: ${args.stages.join(", ")}\n`);
 
   let baselineP95 = null;
