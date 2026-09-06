@@ -1,65 +1,44 @@
+// /api/price/....
+
+
 import client from "@/lib/redisConnect"; // Redis client for caching and single-flight protection
-import { getWithSingleFlight } from "@/lib/priceCache";
-import { interPolatePrice } from "@/lib/interpolation";
-import { toAlchemyNetwork } from "@/lib/networks";
-import { guardRoute } from "@/lib/routeGuard";
-import { isValidTokenAddress } from "@/lib/validation";
-import { logger } from "@/lib/logger";
-import { NextRequest, NextResponse } from "next/server";
+import { getWithSingleFlight } from "@/lib/priceCache"; // Single-flight cache wrapper for price lookups with Redis and in-memory locks
+import { interPolatePrice } from "@/lib/interpolation"; // a function to interpolate price between two time points
+import { toAlchemyNetwork } from "@/lib/networks";  // map network identifiers to Alchemy's network slugs
+import { guardRoute } from "@/lib/routeGuard"; // Rate limiting and request validation for API routes
+import { isValidTokenAddress } from "@/lib/validation"; // simple function to validate token addresses using regex pattern
+import { logger } from "@/lib/logger"; // simple logger utility for structured logging in the application
+import { NextRequest, NextResponse } from "next/server"; // typesafety for Next.js API route request and response objects
 
-// Read/lookup route, not admin-only - generous enough for normal dashboard
-// use, tight enough to bound a runaway script. See README "API
-// authentication and rate limiting" for the full policy across routes.
-// failClosedOnRedisError: this route calls Alchemy directly (not via the
-// queue) and priceCache also fails open during a Redis outage - so without
-// this, an outage would mean every request becomes an unthrottled real
-// Alchemy call. See RateLimitOptions.failClosed in rateLimit.ts.
 const RATE_LIMIT = { routeName: "price", limit: 60, windowSeconds: 60, failClosedOnRedisError: true };
-
-// "Current" price is volatile - short freshness window, single-flight +
-// stale-while-revalidate so a popular token's expiring cache entry doesn't
-// cause N concurrent requests to all hit Alchemy at once.
 const CURRENT_PRICE_CACHE = {
   softTtlMs: 30 * 1000,
   hardTtlMs: 5 * 60 * 1000,
 };
 
-// A historical price for a given past day is immutable once known, so it
-// doesn't need revalidation - just a long TTL and single-flight protection
-// against a cold-cache stampede the first time a token/day is requested.
 const HISTORY_CACHE = {
   softTtlMs: 30 * 24 * 60 * 60 * 1000,
   hardTtlMs: 30 * 24 * 60 * 60 * 1000,
 };
 
-const dayBucket = (unixSeconds: string): number =>
-  Math.floor(parseInt(unixSeconds, 10) / 86400) * 86400;
+const dayBucket = (unixSeconds: string): number => Math.floor(parseInt(unixSeconds, 10) / 86400) * 86400;
 
-// Lets the benchmark harness (scripts/benchmark.mjs) measure genuine
-// uncached upstream latency as a real "before" number, not an inferred one -
-// without this there's no way to see what a request costs with the cache
-// infrastructure completely out of the picture, only "first request" (cold),
-// which still pays Redis GET/lock-acquire overhead on the way to the miss.
-// Gated behind an env var so the header has no effect at all unless the
-// operator explicitly opts in - a caller can send x-bypass-cache on a
-// production deployment with ALLOW_CACHE_BYPASS unset and it's a silent
-// no-op, not a way to force-drain Alchemy quota on demand.
 const CACHE_BYPASS_HEADER = "x-bypass-cache";
 const CACHE_BYPASS_SOURCE = "bypass-header";
 
-function cacheBypassRequested(request: NextRequest): boolean {
+function cacheBypassRequested(request: NextRequest): boolean { // simple function to check if the request has the cache bypass header set to "1" and if the environment variable ALLOW_CACHE_BYPASS is set to "true"
   return process.env.ALLOW_CACHE_BYPASS === "true" && request.headers.get(CACHE_BYPASS_HEADER) === "1";
 }
 
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest) { // main entry point for the /api/price POST route, which fetches current and historical price data for a given token address and network, with optional cache bypassing and single-flight protection
   try {
-    const guard = await guardRoute(request, client, RATE_LIMIT);
-    if (!guard.ok) return guard.response;
+    const guard = await guardRoute(request, client, RATE_LIMIT); // check rate limit and validate request by session or api key, returning a response if the request is not allowed
+    if (!guard.ok) return guard.response; // request is not allowed, return the response from the guard
 
     const body = await request.json();
     const { coinId, network, startTime } = body;
 
-    if (!coinId || !network || !startTime) {
+    if (!coinId || !network || !startTime) {  // missing required parameters, return a 400 Bad Request response with an error message
       return NextResponse.json(
         {
           success: false,
@@ -69,14 +48,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!isValidTokenAddress(coinId)) {
+    if (!isValidTokenAddress(coinId)) { // invalid token address, return a 400 Bad Request response with an error message
       return NextResponse.json(
         { success: false, message: "coinId must be a valid token address (0x + 40 hex chars)" },
         { status: 400, headers: guard.headers }
       );
     }
 
-    const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
+    const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY; // check if the Alchemy API key is set in the environment variables, return a 500 Internal Server Error response with an error message if not
     if (!ALCHEMY_API_KEY) {
       return NextResponse.json(
         { success: false, message: "Missing Alchemy API key." },
@@ -84,8 +63,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const alchemyNetwork = toAlchemyNetwork(network);
-    const coinKey = coinId.toLowerCase();
+    const alchemyNetwork = toAlchemyNetwork(network); // map the netowrk
+    const coinKey = coinId.toLowerCase(); 
     const networkKey = network.toLowerCase();
 
     const currentKey = `price:current:${coinKey}:${networkKey}`;
@@ -94,12 +73,12 @@ export async function POST(request: NextRequest) {
 
     let currentPriceData: string | undefined;
     let currentPriceSource: string | undefined;
-    try {
-      if (bypassCache) {
+    try { 
+      if (bypassCache) { // if the cache bypass header is set, fetch the current price directly from Alchemy without using the cache or single-flight protection
         currentPriceData = await currentPrice(coinId, alchemyNetwork);
         currentPriceSource = CACHE_BYPASS_SOURCE;
       } else {
-        const result = await getWithSingleFlight(
+        const result = await getWithSingleFlight(  //  fetch the current price using the single-flight cache wrapper, which will either return a cached value or fetch a fresh value from Alchemy and cache it for future requests
           client,
           currentKey,
           () => currentPrice(coinId, alchemyNetwork),

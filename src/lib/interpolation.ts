@@ -1,3 +1,4 @@
+// a function to interpolate price between two time points
 export function interPolatePrice(
   currentTime: string,
   beforeTime: string,

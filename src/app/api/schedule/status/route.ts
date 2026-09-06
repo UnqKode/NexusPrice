@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
-import priceHistoryQueue from "@/lib/priceHistoryQueue";
+import { NextRequest, NextResponse } from "next/server"; // typesafety
+import priceHistoryQueue from "@/lib/priceHistoryQueue"; // 
 import { historyJobId } from "@/lib/jobId";
 import redisClient from "@/lib/redisConnect";
 import { guardRoute } from "@/lib/routeGuard";

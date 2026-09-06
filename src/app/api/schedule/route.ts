@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
-import dbConnect from "@/lib/dbConnect";
-import { historyJobId } from "@/lib/jobId";
+import { NextRequest, NextResponse } from "next/server"; // typesafety
+import dbConnect from "@/lib/dbConnect"; // manogob instance
+import { historyJobId } from "@/lib/jobId"; // deterministic jobId for a given token/network pair
 import priceHistoryQueue from "@/lib/priceHistoryQueue";
 import redisClient from "@/lib/redisConnect";
 import { guardRoute } from "@/lib/routeGuard";
