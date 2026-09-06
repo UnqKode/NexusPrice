@@ -1,67 +1,33 @@
-// Single-flight cache with stale-while-revalidate and jittered TTLs.
-//
-// Why this exists: a naive get/set cache either (a) lets every concurrent
-// miss on a hot key hit the upstream API at once (stampede), or (b) blocks
-// every request behind a single fetch with no way to serve slightly-stale
-// data while a refresh is in flight. This combines four techniques so a
-// hot key never causes more than one upstream call at a time, and Redis
-// itself never becomes a hard dependency:
-//
-//   1. Single-flight lock (SET NX PX) - only one caller per key is allowed
-//      to be "the one calling upstream" at any moment. Everyone else either
-//      waits briefly for that caller to finish, or serves stale data.
-//   2. Stale-while-revalidate - once a value passes its soft TTL it is still
-//      served immediately (source: "stale") while a refresh is kicked off
-//      in the background, so callers never pay the upstream latency on a
-//      cache that is merely old rather than empty.
-//   3. Jittered hard TTL - the eventual Redis expiry is randomized +/- a
-//      ratio so that a batch of keys written around the same time (e.g. a
-//      backfill run) don't all expire in the same second and reintroduce a
-//      stampede at the "many keys expire together" level.
-//   4. Fail-open on Redis - every Redis call is timeout-bounded and any
-//      failure in the cache path (timeout, connection error, corrupt data)
-//      degrades to calling upstream directly (source: "bypass") instead of
-//      failing the request. A cache should make things faster, not be a
-//      dependency that can take the service down when it's unavailable.
+// a single file implementation of a single-flight cache with stale-while-revalidate semantics, using Redis as the backing store. 
+//This is useful for caching expensive upstream calls (e.g., to a database or external API) while avoiding stampedes when many requests come in for the same key at once.
 
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto"; // generate a random token for single-flight locks
 
-export interface RedisLike {
-  get(key: string): Promise<string | null>;
-  set(
+export interface RedisLike {  // typesafety
+  get(key: string): Promise<string | null>; // returns null if the key does not exist
+  set( // returns "OK" if the operation was successful, or null if the key was not set due to NX option
     key: string,
     value: string,
     opts?: { EX?: number; NX?: boolean; PX?: number }
   ): Promise<unknown>;
-  del(key: string): Promise<unknown>;
-  eval(script: string, options: { keys: string[]; arguments: string[] }): Promise<unknown>;
+  del(key: string): Promise<unknown>; // returns the number of keys that were removed
+  eval(script: string, options: { keys: string[]; arguments: string[] }): Promise<unknown>; // returns the result of the script execution
 }
 
-interface CacheEnvelope<T> {
+interface CacheEnvelope<T> { // represents the structure of the cached data stored in Redis
   data: T;
   storedAt: number;
   softTtlMs: number;
 }
 
 export interface SingleFlightOptions {
-  /** How long the value is considered fresh; no refetch triggered while inside this window. */
-  softTtlMs: number;
-  /** How long Redis retains the value at all (the stale-but-servable window ends here). */
-  hardTtlMs: number;
-  /** How long a single-flight lock is held before it's assumed abandoned. */
-  lockTtlMs?: number;
-  /** How long a waiter blocks for the lock-holder before giving up and fetching itself. */
-  lockWaitMs?: number;
-  lockPollIntervalMs?: number;
-  /** +/- ratio applied to hardTtlMs, e.g. 0.1 = +/-10%, to desynchronize expiry. */
-  jitterRatio?: number;
-  /** Max time to wait on any single Redis call before treating the cache
-   * path as failed and bypassing straight to fetchFresh(). node-redis has no
-   * per-command timeout of its own (only a connection timeout, which
-   * doesn't help once a connection exists but the host stops responding),
-   * so without this a hung/unreachable Redis host hangs the request
-   * indefinitely instead of degrading. */
-  redisTimeoutMs?: number;
+  softTtlMs: number; // how long to serve stale data before revalidating
+  hardTtlMs: number; // how long before the cache entry is considered expired and removed from Redis
+  lockTtlMs?: number; // how long to hold the single-flight lock before it expires
+  lockWaitMs?: number; // how long to wait for the lock-holder to finish before giving up and fetching upstream ourselves
+  lockPollIntervalMs?: number; // how often to poll for the lock-holder's completion while waiting
+  jitterRatio?: number; // the ratio of jitter to apply to the hard TTL when writing to Redis (e.g., 0.1 means +/-10% jitter)
+  redisTimeoutMs?: number; // max time to wait on any single Redis call before treating the cache path as failed
 }
 
 type ResolvedOptions = Required<SingleFlightOptions>;
@@ -76,32 +42,28 @@ const DEFAULTS: Omit<ResolvedOptions, "softTtlMs" | "hardTtlMs"> = {
 
 export type CacheSource = "fresh" | "stale" | "revalidated" | "bypass";
 
-// Distinguishes "Redis itself failed" from "fetchFresh() (the upstream call)
-// failed" - getWithSingleFlight's outer catch only bypasses on this type, so
-// a genuine upstream failure during the normal cache flow still propagates
-// to the caller once, rather than being swallowed and silently retried.
-class RedisCacheError extends Error {
+class RedisCacheError extends Error { // differentiate Redis failures from upstream failures so we can degrade to bypassing the cache instead of throwing
   constructor(message: string, public readonly cause?: unknown) {
     super(message);
     this.name = "RedisCacheError";
   }
 }
 
-function sleep(ms: number): Promise<void> {
+function sleep(ms: number): Promise<void> { // function to pause execution for a given number of milliseconds
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function jitteredTtlSeconds(hardTtlMs: number, jitterRatio: number): number {
+function jitteredTtlSeconds(hardTtlMs: number, jitterRatio: number): number { // apply jitter to the hard TTL to avoid stampedes when many keys expire at once
   const jitter = 1 + (Math.random() * 2 - 1) * jitterRatio;
   return Math.max(1, Math.round((hardTtlMs * jitter) / 1000));
 }
 
-function withRedisTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+function withRedisTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> { // wrap a Redis call in a timeout so that if it takes too long, we treat it as a failure and degrade to bypassing the cache instead of blocking the request indefinitely
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new RedisCacheError(`Redis ${label} timed out after ${ms}ms`)), ms);
+    const timer = setTimeout(() => reject(new RedisCacheError(`Redis ${label} timed out after ${ms}ms`)), ms); // timeout to reject the promise if the Redis call takes too long
     promise.then(
       (value) => {
-        clearTimeout(timer);
+        clearTimeout(timer); // clear the timeout if the Redis call succeeds before the timeout
         resolve(value);
       },
       (err) => {
@@ -112,9 +74,6 @@ function withRedisTimeout<T>(promise: Promise<T>, ms: number, label: string): Pr
   });
 }
 
-// A corrupt/truncated envelope is treated as a miss rather than letting
-// JSON.parse throw all the way out - and the bad key is deleted so it
-// doesn't keep failing on every subsequent read.
 async function parseEnvelope<T>(
   redis: RedisLike,
   key: string,
@@ -130,20 +89,15 @@ async function parseEnvelope<T>(
   }
 }
 
-const RELEASE_LOCK_SCRIPT = `
+const RELEASE_LOCK_SCRIPT = ` 
 if redis.call("GET", KEYS[1]) == ARGV[1] then
   return redis.call("DEL", KEYS[1])
 else
   return 0
 end
-`;
+`; // script to release a lock only if the token matches, preventing accidental deletion of another process's lock
 
-// Compare-and-delete via Lua so releasing a lock is atomic: a holder whose
-// lock already expired (e.g. a slow fetchFresh() that outran lockTtlMs) can
-// no longer delete a *different*, newer holder's lock just because it
-// shares the same key - it only deletes if the value still matches the
-// random token it was given when it originally acquired the lock.
-async function releaseLock(redis: RedisLike, lockKey: string, token: string, timeoutMs: number): Promise<void> {
+async function releaseLock(redis: RedisLike, lockKey: string, token: string, timeoutMs: number): Promise<void> { // release the single-flight lock if we still hold it, using a Lua script to ensure atomicity
   try {
     await withRedisTimeout(
       redis.eval(RELEASE_LOCK_SCRIPT, { keys: [lockKey], arguments: [token] }),
@@ -155,7 +109,7 @@ async function releaseLock(redis: RedisLike, lockKey: string, token: string, tim
   }
 }
 
-async function writeCache<T>(
+async function writeCache<T>( // write the cache envelope to Redis with a jittered TTL
   redis: RedisLike,
   key: string,
   data: T,
@@ -170,7 +124,7 @@ async function writeCache<T>(
   await withRedisTimeout(redis.set(key, JSON.stringify(envelope), { EX: ttlSeconds }), opts.redisTimeoutMs, "SET");
 }
 
-async function tryRevalidateInBackground<T>(
+async function tryRevalidateInBackground<T>( 
   redis: RedisLike,
   key: string,
   lockKey: string,
@@ -179,7 +133,7 @@ async function tryRevalidateInBackground<T>(
 ): Promise<void> {
   const token = randomUUID();
   const acquired = await withRedisTimeout(
-    redis.set(lockKey, token, { NX: true, PX: opts.lockTtlMs }),
+    redis.set(lockKey, token, { NX: true, PX: opts.lockTtlMs }), // .set either writes a data or  creates a lock if the key does not exist, and returns null if the key already exists (i.e., another process is already revalidating this key)
     opts.redisTimeoutMs,
     "SET"
   ).catch(() => null);
@@ -197,7 +151,7 @@ async function tryRevalidateInBackground<T>(
   }
 }
 
-async function runCacheFlow<T>(
+async function runCacheFlow<T>( // the main cache flow: try to get from cache, if stale or missing, fetch fresh and write back to cache, with single-flight locking to prevent stampedes
   redis: RedisLike,
   key: string,
   lockKey: string,
@@ -215,19 +169,14 @@ async function runCacheFlow<T>(
       if (age < envelope.softTtlMs) {
         return { data: envelope.data, source: "fresh" };
       }
-
-      // Soft-expired but still within hardTtl: serve stale immediately, and
-      // let at most one caller refresh it in the background.
       void tryRevalidateInBackground(redis, key, lockKey, fetchFresh, opts);
       return { data: envelope.data, source: "stale" };
     }
-    // Envelope was corrupt and has been deleted by parseEnvelope - fall
-    // through to the hard-miss path below as if this had been a plain miss.
   }
 
   // Hard miss: try to become the single writer for this key.
   const token = randomUUID();
-  const acquired = await withRedisTimeout(
+  const acquired = await withRedisTimeout( // put a lock in Redis to become the single-flight writer for this key, with a timeout to avoid blocking indefinitely if Redis is slow or unavailable
     redis.set(lockKey, token, { NX: true, PX: opts.lockTtlMs }),
     opts.redisTimeoutMs,
     "SET"
@@ -236,8 +185,6 @@ async function runCacheFlow<T>(
   if (acquired) {
     try {
       const data = await fetchFresh();
-      // A write failure here shouldn't turn a successful upstream fetch
-      // into a second, redundant one - just serve what we already have.
       await writeCache(redis, key, data, opts).catch((err) => {
         console.error(`⚠️ Failed to write cache for key "${key}" after a successful fetch:`, err);
       });
@@ -262,11 +209,6 @@ async function runCacheFlow<T>(
     }
   }
 
-  // The lock-holder never finished in time (e.g. crashed mid-fetch while
-  // holding the lock). Degrade to fetching ourselves rather than hanging
-  // indefinitely - this is the one path that can still stampede, by design:
-  // it trades a bounded amount of duplicate upstream load for never blocking
-  // a request forever behind a dead lock-holder.
   const data = await fetchFresh();
   await writeCache(redis, key, data, opts).catch(() => {});
   return { data, source: "bypass" };
@@ -279,7 +221,7 @@ async function runCacheFlow<T>(
  * in time, or Redis itself was unavailable, which is a signal upstream
  * latency, lockTtlMs, or Redis health needs attention).
  */
-export async function getWithSingleFlight<T>(
+export async function getWithSingleFlight<T>( // main entry point for the single-flight cache flow
   redis: RedisLike,
   key: string,
   fetchFresh: () => Promise<T>,
@@ -292,9 +234,6 @@ export async function getWithSingleFlight<T>(
     return await runCacheFlow(redis, key, lockKey, fetchFresh, opts);
   } catch (err) {
     if (!(err instanceof RedisCacheError)) {
-      // A genuine upstream failure during the normal flow (e.g. the
-      // lock-holder's own fetchFresh() threw) - not ours to swallow or
-      // retry, the caller already handles this the same way it always has.
       throw err;
     }
     console.error(`⚠️ Cache path failed for key "${key}", bypassing to upstream:`, err);
