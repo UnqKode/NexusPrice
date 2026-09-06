@@ -1,34 +1,12 @@
-// Shared auth + rate-limit (+ optional admin) check every API route runs
-// first. Extracted because the sequence is identical across every route
-// that needs it - authenticate, rate-limit by whoever that identity is,
-// optionally require admin scope - not because it's speculative
-// abstraction for a need that doesn't exist yet.
 import { NextRequest, NextResponse } from "next/server"; //typeSafety for typeScript
-import { authenticateRequestOrSession, isAdmin, type AuthenticatedIdentity } from "./apiAuth";
-import { checkRateLimit, rateLimitHeaders, type RateLimitRedis } from "./rateLimit";
+import { authenticateRequestOrSession, isAdmin, type AuthenticatedIdentity } from "./apiAuth"; // serves a method to authenticate via api key or active session (userID or session)
+import { checkRateLimit, rateLimitHeaders, type RateLimitRedis } from "./rateLimit"; // a simple rate limiter using redis and header generation for rate limit info
 
 export interface GuardOptions {
-  /**
-   * Distinguishes this route's rate-limit budget from every other route's.
-   * Required (not optional) on purpose: checkRateLimit's counter key is
-   * `ratelimit:<identifier>:<windowBucket>`, so two routes with the same
-   * windowSeconds calling it with the same identity would land on the
-   * *same* Redis key at the same moment and silently share one budget -
-   * e.g. without this, one caller polling /api/schedule/status (120/60s)
-   * would also eat into a completely unrelated 60s-windowed route's limit.
-   * guardRoute folds this into the identifier so each route gets its own
-   * counter per caller. Pick something stable and unique per route, e.g.
-   * "price", "historical-prices", "schedule", "schedule-status".
-   */
-  routeName: string;
-  /** Max requests allowed per identity within `windowSeconds`. */
-  limit: number;
-  windowSeconds: number;
-  /** If true, only an admin-scoped identity (an admin API key, or any
-   * dashboard session - see apiAuth.ts) passes; anyone else gets 403. */
-  requireAdmin?: boolean;
-  /** Forwarded to checkRateLimit - see RateLimitOptions.failClosed in
-   * rateLimit.ts for what this means and which routes should set it. */
+  routeName: string; // a unique name for the route, used to generate a rate limit key
+  limit: number; // the maximum number of requests allowed in the window
+  windowSeconds: number; // the length of the window in seconds
+  requireAdmin?: boolean; // whether the route requires an admin-scoped API key or dashboard session
   failClosedOnRedisError?: boolean;
 }
 
@@ -41,8 +19,9 @@ export async function guardRoute(
   redis: RateLimitRedis,
   options: GuardOptions
 ): Promise<GuardResult> {
-  const auth = await authenticateRequestOrSession(request);
-  if (!auth.ok) {
+
+  const auth = await authenticateRequestOrSession(request); //authenticate the request or session, returning an object with ok, message, status, and identity if successful
+  if (!auth.ok) { // no session or api key found, or invalid api key, return 401 with message
     return {
       ok: false,
       response: NextResponse.json({ success: false, message: auth.message }, { status: auth.status }),
@@ -61,21 +40,13 @@ export async function guardRoute(
     };
   }
 
-  // Composing the route into the identifier (rather than passing it as a
-  // separate argument to checkRateLimit) keeps rateLimit.ts's own notion of
-  // "identifier" a plain opaque string - it doesn't need to know "route" is
-  // a concept, and every call site is forced to supply one via the required
-  // GuardOptions.routeName above.
   const rateLimitKey = `${options.routeName}:${identity.id}`;
-  const rateLimit = await checkRateLimit(redis, rateLimitKey, options.limit, options.windowSeconds, {
+  const rateLimit = await checkRateLimit(redis, rateLimitKey, options.limit, options.windowSeconds, { // return {true , false} if the request is allowed or not, and some metadata about the rate limit
     failClosed: options.failClosedOnRedisError,
   });
-  const headers = rateLimitHeaders(rateLimit);
+  const headers = rateLimitHeaders(rateLimit); // convert the rate limit result into headers to be sent back to the client
 
   if (!rateLimit.allowed) {
-    // redisUnavailable means this is a fail-closed response to a Redis
-    // outage, not an actual quota breach - 503 (temporarily unavailable)
-    // is the honest status for that, not 429 (you made too many requests).
     const status = rateLimit.redisUnavailable ? 503 : 429;
     const message = rateLimit.redisUnavailable
       ? "Rate limiter temporarily unavailable, try again shortly"

@@ -1,4 +1,4 @@
-import client from "@/lib/redisConnect";
+import client from "@/lib/redisConnect"; // Redis client for caching and single-flight protection
 import { getWithSingleFlight } from "@/lib/priceCache";
 import { interPolatePrice } from "@/lib/interpolation";
 import { toAlchemyNetwork } from "@/lib/networks";
